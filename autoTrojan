@@ -44,7 +44,7 @@ services:
     image: hongcheng618/wzweb
     container_name: fakeweb
     ports:
-      - "80:80"
+      - "8080:80"
     restart: always
 EOF
 
@@ -75,7 +75,7 @@ cat > config.json <<EOF
   "local_addr": "0.0.0.0",
   "local_port": 443,
   "remote_addr": "127.0.0.1",
-  "remote_port": 80,
+  "remote_port": 8080,
   "password": [
     "$PASSWORD"
   ],
