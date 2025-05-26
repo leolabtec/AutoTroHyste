@@ -11,12 +11,11 @@ fi
 INSTALL_DIR="/opt/AutoTroHyste"
 TROJAN_SCRIPT="$INSTALL_DIR/autoTrojan.sh"
 HYSTERIA_SCRIPT="$INSTALL_DIR/autohysteria2.sh"
-BIN_LINK="/usr/local/bin/d"
 
 # 初始化脚本存储目录
 mkdir -p "$INSTALL_DIR"
 
-# 首次运行：下载脚本、设置权限、快捷命令
+# 首次运行：下载脚本并设置权限
 if [ ! -f "$TROJAN_SCRIPT" ] || [ ! -f "$HYSTERIA_SCRIPT" ]; then
   echo "⬇️  正在首次下载代理部署脚本..."
   curl -fsSL "https://raw.githubusercontent.com/leolabtec/AutoTroHyste/refs/heads/main/autoTrojan" -o "$TROJAN_SCRIPT"
@@ -24,15 +23,7 @@ if [ ! -f "$TROJAN_SCRIPT" ] || [ ! -f "$HYSTERIA_SCRIPT" ]; then
   chmod +x "$TROJAN_SCRIPT" "$HYSTERIA_SCRIPT"
 fi
 
-# 创建快捷命令 d
-if [ ! -L "$BIN_LINK" ]; then
-  echo "🔧 设置快捷命令 'd'..."
-  ln -sf "$INSTALL_DIR/install.sh" "$BIN_LINK"
-  chmod +x "$BIN_LINK"
-  echo "✅ 快捷命令 'd' 已创建，可通过命令 'd' 启动。"
-fi
-
-# 运行主选择界面
+# 显示部署选项菜单
 echo "📦 请选择要部署的节点类型："
 echo "1) Trojan-Go"
 echo "2) Hysteria2"
