@@ -69,7 +69,9 @@ echo "📡 启动 Hysteria2 服务..."
 systemctl restart hysteria-server.service
 
 # 获取公网 IP
-IP=$(curl -s https://api64.ipify.org || curl -s https://ipinfo.io/ip)
+IPv4=$(curl -4 -s https://api64.ipify.org)
+IPv6=$(curl -6 -s https://api64.ipify.org)
+IP=${IPv4:-$IPv6}
 
 echo ""
 echo "🎉 Hysteria2 节点部署完成！以下是连接信息："
