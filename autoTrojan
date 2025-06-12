@@ -66,7 +66,6 @@ chmod +x trojan-go
 
 # 生成密码
 PASSWORD=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 20)
-echo -e "${GREEN}生成的连接密码为：$PASSWORD${NC}"
 
 # 写入 config.json
 cat > config.json <<EOF
