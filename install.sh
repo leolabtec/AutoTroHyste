@@ -6,6 +6,11 @@ if [ "$EUID" -ne 0 ]; then
   echo "❌ 请使用 root 权限运行此脚本"
   exit 1
 fi
+# 确保依赖 dnsutils 存在（提供 dig 命令）
+if ! command -v dig >/dev/null 2>&1; then
+  echo "🔧 安装 dig 所需依赖 dnsutils..."
+  apt update && apt install -y dnsutils
+fi
 
 # 定义本地目录和脚本路径
 INSTALL_DIR="/opt/AutoTroHyste"
