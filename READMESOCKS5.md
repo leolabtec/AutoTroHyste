@@ -1,3 +1,11 @@
+## 一键命令
+```sh
+bash <(curl -fsSL https://raw.githubusercontent.com/leolabtec/AutoTroHyste/refs/heads/main/Socks5.sh)
+```
+
+
+
+
 ✅ 二、检查 SOCKS5 是否运行正常
 
 1. 检查监听端口是否正常：
