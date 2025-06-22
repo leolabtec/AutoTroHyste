@@ -7,7 +7,7 @@ if [ "$EUID" -ne 0 ]; then
   exit 1
 fi
 
-# 确保 dig 可用
+# 确保依赖 dnsutils 存在（提供 dig 命令）
 if ! command -v dig >/dev/null 2>&1; then
   echo "🔧 安装 dig 所需依赖 dnsutils..."
   apt update && apt install -y dnsutils
@@ -17,19 +17,21 @@ fi
 INSTALL_DIR="/opt/AutoTroHyste"
 TROJAN_SCRIPT="$INSTALL_DIR/autoTrojan.sh"
 HYSTERIA_SCRIPT="$INSTALL_DIR/autohysteria2.sh"
-SOCKS5_SCRIPT="$INSTALL_DIR/autosocks5.sh"
+SOCKS5_SCRIPT="$INSTALL_DIR/Socks5.sh"
 
-# 创建脚本存储目录
+# 初始化脚本存储目录
 mkdir -p "$INSTALL_DIR"
 
-# 下载缺失的脚本文件
-echo "⬇️  正在检查并下载缺失的部署脚本..."
-[[ ! -f "$TROJAN_SCRIPT" ]] && curl -fsSL "https://raw.githubusercontent.com/leolabtec/AutoTroHyste/main/autoTrojan.sh" -o "$TROJAN_SCRIPT"
-[[ ! -f "$HYSTERIA_SCRIPT" ]] && curl -fsSL "https://raw.githubusercontent.com/leolabtec/AutoTroHyste/main/autohysteria2.sh" -o "$HYSTERIA_SCRIPT"
-[[ ! -f "$SOCKS5_SCRIPT" ]] && curl -fsSL "https://raw.githubusercontent.com/leolabtec/AutoTroHyste/main/autosocks5.sh" -o "$SOCKS5_SCRIPT"
-chmod +x "$TROJAN_SCRIPT" "$HYSTERIA_SCRIPT" "$SOCKS5_SCRIPT"
+# 首次运行：下载脚本并设置权限
+if [ ! -f "$TROJAN_SCRIPT" ] || [ ! -f "$HYSTERIA_SCRIPT" ] || [ ! -f "$SOCKS5_SCRIPT" ]; then
+  echo "⬇️  正在首次下载代理部署脚本..."
+  curl -fsSL "https://raw.githubusercontent.com/leolabtec/AutoTroHyste/main/autoTrojan.sh" -o "$TROJAN_SCRIPT"
+  curl -fsSL "https://raw.githubusercontent.com/leolabtec/AutoTroHyste/main/autohysteria2.sh" -o "$HYSTERIA_SCRIPT"
+  curl -fsSL "https://raw.githubusercontent.com/leolabtec/AutoTroHyste/main/Socks5.sh" -o "$SOCKS5_SCRIPT"
+  chmod +x "$TROJAN_SCRIPT" "$HYSTERIA_SCRIPT" "$SOCKS5_SCRIPT"
+fi
 
-# 显示部署菜单
+# 显示部署选项菜单
 echo ""
 echo "📦 请选择要部署的节点类型："
 echo "1) Trojan-Go"
