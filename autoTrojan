@@ -62,18 +62,7 @@ EOF
 docker-compose up -d
 
 # ===============================
-# 5️⃣ 申请 SSL 证书
-# ===============================
-~/.acme.sh/acme.sh --set-default-ca --server letsencrypt
-~/.acme.sh/acme.sh --issue -d $DOMAIN --standalone --keylength ec-256
-
-~/.acme.sh/acme.sh --installcert -d $DOMAIN --ecc \
-  --key-file /root/trojan/server.key \
-  --fullchain-file /root/trojan/server.crt \
-  --reloadcmd "systemctl restart trojan-go"
-
-# ===============================
-# 6️⃣ 下载并配置 trojan-go
+# 5️⃣ 下载并配置 trojan-go
 # ===============================
 cd /root/trojan
 if [[ ! -f trojan-go ]]; then
@@ -109,7 +98,7 @@ cat > config.json <<EOF
 EOF
 
 # ===============================
-# 7️⃣ 创建 systemd 服务
+# 6️⃣ 创建 systemd 服务
 # ===============================
 cat > /etc/systemd/system/trojan-go.service <<EOF
 [Unit]
@@ -129,12 +118,22 @@ WantedBy=multi-user.target
 EOF
 
 systemctl daemon-reload
-systemctl enable --now trojan-go
+systemctl enable trojan-go
 
 # ===============================
-# 8️⃣ 定时任务（交给 acme.sh 自己管理）
+# 7️⃣ 申请 SSL 证书（最后执行，避免 reload 报错）
 # ===============================
-# acme.sh 自带 renew 机制，只需保证 cron 在跑
+~/.acme.sh/acme.sh --set-default-ca --server letsencrypt
+~/.acme.sh/acme.sh --issue -d $DOMAIN --standalone --keylength ec-256
+
+~/.acme.sh/acme.sh --installcert -d $DOMAIN --ecc \
+  --key-file /root/trojan/server.key \
+  --fullchain-file /root/trojan/server.crt \
+  --reloadcmd "systemctl restart trojan-go"
+
+# ===============================
+# 8️⃣ 开启自动更新
+# ===============================
 ~/.acme.sh/acme.sh --upgrade --auto-upgrade
 
 # ===============================
