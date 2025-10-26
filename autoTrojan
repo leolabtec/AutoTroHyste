@@ -133,15 +133,21 @@ if [[ ! -d "$HYSTERIA_DIR" ]]; then
     chown "$HYSTERIA_USER:$HYSTERIA_USER" "$HYSTERIA_DIR"
 fi
 
-# ============ 创建 hook.sh ============
-cat > /root/hook.sh <<EOF
+cat > /root/hook.sh <<'EOF'
 #!/bin/bash
 set -euo pipefail
 
-DOMAIN="$DOMAIN"
-ACME_PATH="/root/.acme.sh/\${DOMAIN}_ecc"
-SRC_CERT="\${ACME_PATH}/fullchain.cer"
-SRC_KEY="\${ACME_PATH}/\${DOMAIN}.key"
+# 获取域名参数（acme.sh 会传入域名作为 $1）
+DOMAIN="${1:-}"
+
+if [[ -z "$DOMAIN" ]]; then
+    echo "[HOOK] ERROR: 未传入域名参数，请检查 acme.sh 调用方式"
+    exit 1
+fi
+
+ACME_PATH="/root/.acme.sh/${DOMAIN}_ecc"
+SRC_CERT="${ACME_PATH}/fullchain.cer"
+SRC_KEY="${ACME_PATH}/${DOMAIN}.key"
 
 TROJAN_DIR="/root/trojan"
 HYSTERIA_DIR="/etc/hysteria"
@@ -149,34 +155,48 @@ HYSTERIA_USER="hysteria"
 
 echo "[HOOK] 证书续签成功，开始覆盖并重启服务..."
 
-# 停止服务
-systemctl stop trojan-go.service 2>/dev/null || true
-systemctl stop hysteria-server.service 2>/dev/null || true
+# 1️⃣ 停止服务
+echo "[HOOK] 停止 Trojan-Go 与 Hysteria 服务..."
+systemctl stop trojan-go.service || true
+systemctl stop hysteria-server.service || true
+sleep 1  # 等待服务完全退出
 
-# 覆盖 Trojan-Go 证书
+# 2️⃣ 更新 Trojan-Go 证书
 echo "[HOOK] 更新 Trojan-Go 证书..."
-install -m 600 "\$SRC_KEY" "\$TROJAN_DIR/server.key"
-install -m 644 "\$SRC_CERT" "\$TROJAN_DIR/server.crt"
-chown root:root "\$TROJAN_DIR/server.key" "\$TROJAN_DIR/server.crt"
+install -m 600 "$SRC_KEY" "$TROJAN_DIR/server.key"
+install -m 644 "$SRC_CERT" "$TROJAN_DIR/server.crt"
+chown root:root "$TROJAN_DIR/server.key" "$TROJAN_DIR/server.crt"
 
-# 覆盖 Hysteria 证书
-if [[ -d "\$HYSTERIA_DIR" ]]; then
+# 3️⃣ 更新 Hysteria 证书（如果存在）
+if [[ -d "$HYSTERIA_DIR" ]]; then
     echo "[HOOK] 更新 Hysteria 证书..."
-    install -m 600 "\$SRC_KEY" "\$HYSTERIA_DIR/server.key"
-    install -m 644 "\$SRC_CERT" "\$HYSTERIA_DIR/server.crt"
-    chown "\$HYSTERIA_USER:\$HYSTERIA_USER" "\$HYSTERIA_DIR/server.key" "\$HYSTERIA_DIR/server.crt"
+    install -m 600 "$SRC_KEY" "$HYSTERIA_DIR/server.key"
+    install -m 644 "$SRC_CERT" "$HYSTERIA_DIR/server.crt"
+    # 确保用户存在再 chown
+    if id "$HYSTERIA_USER" >/dev/null 2>&1; then
+        chown "$HYSTERIA_USER:$HYSTERIA_USER" "$HYSTERIA_DIR/server.key" "$HYSTERIA_DIR/server.crt"
+    else
+        echo "[HOOK] WARNING: 用户 $HYSTERIA_USER 不存在，跳过 chown"
+    fi
 fi
 
-# 重启服务
+# 4️⃣ 重启服务
 echo "[HOOK] 重启 Trojan-Go 与 Hysteria 服务..."
-systemctl restart trojan-go.service
-systemctl restart hysteria-server.service 2>/dev/null || true
+if ! systemctl restart trojan-go.service; then
+    echo "[HOOK] ERROR: Trojan-Go 服务重启失败"
+fi
+
+if ! systemctl restart hysteria-server.service; then
+    echo "[HOOK] WARNING: Hysteria 服务重启失败（可能未安装或配置问题）"
+fi
 
 echo "[HOOK] 已完成证书更新并重启服务."
 EOF
+
 chmod +x /root/hook.sh
 chown root:root /root/hook.sh
 chmod 700 /root/hook.sh
+
 
 # ============ 申请证书 ============
 ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt
