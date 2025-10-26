@@ -20,19 +20,35 @@ if [[ -z "$resolve_ipv4" && -z "$resolve_ipv6" ]]; then
     exit 1
 fi
 
-# 获取本机公网 IP
-my_ipv4=$(curl -s https://ifconfig.me)
-my_ipv6=$(curl -s https://ifconfig.me -6 || true)
+# 获取本机公网 IP（强制 IPv4/IPv6）
+my_ipv4=$(curl -4 -s https://ifconfig.me || curl -4 -s https://ifconfig.co || true)
+my_ipv6=$(curl -6 -s https://ifconfig.me || curl -6 -s https://ifconfig.co || true)
 
-# 校验 IPv4
-if [[ -n "$resolve_ipv4" && "$resolve_ipv4" != "$my_ipv4" ]]; then
-    echo -e "${RED}错误：域名解析的 IPv4 ($resolve_ipv4) 与本机公网 IPv4 ($my_ipv4) 不匹配！${NC}"
-    exit 1
-fi
+# ===============================
+# 优先校验 IPv4，如果没有 IPv4 再校验 IPv6
+# ===============================
 
-# 校验 IPv6（如果存在）
-if [[ -n "$resolve_ipv6" && "$my_ipv6" != "" && "$resolve_ipv6" != "$my_ipv6" ]]; then
-    echo -e "${RED}错误：域名解析的 IPv6 ($resolve_ipv6) 与本机公网 IPv6 ($my_ipv6) 不匹配！${NC}"
+if [[ -n "$resolve_ipv4" ]]; then
+    # 只校验 IPv4（如果 A 记录存在，不再校验 AAAA）
+    if [[ "$resolve_ipv4" != "$my_ipv4" ]]; then
+        echo -e "${RED}错误：域名解析的 IPv4 ($resolve_ipv4) 与本机公网 IPv4 ($my_ipv4) 不匹配！${NC}"
+        exit 1
+    fi
+    echo -e "${GREEN}域名解析成功且匹配本机公网 IPv4${NC}"
+
+elif [[ -n "$resolve_ipv6" ]]; then
+    # 没有 IPv4 时，校验 IPv6
+    if [[ -z "$my_ipv6" ]]; then
+        echo -e "${RED}错误：本机没有可用的 IPv6 公网地址，无法校验！${NC}"
+        exit 1
+    fi
+    if [[ "$resolve_ipv6" != "$my_ipv6" ]]; then
+        echo -e "${RED}错误：域名解析的 IPv6 ($resolve_ipv6) 与本机公网 IPv6 ($my_ipv6) 不匹配！${NC}"
+        exit 1
+    fi
+    echo -e "${GREEN}域名解析成功且匹配本机公网 IPv6${NC}"
+else
+    echo -e "${RED}错误：未检测到有效的解析记录（不应出现）${NC}"
     exit 1
 fi
 
