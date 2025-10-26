@@ -12,8 +12,8 @@ NC='\033[0m'
 read -p "请输入你的域名（确保已解析）: " DOMAIN
 
 # 域名解析
-resolve_ipv4=$(dig +short A "$DOMAIN" | head -n1 || true)
-resolve_ipv6=$(dig +short AAAA "$DOMAIN" | head -n1 || true)
+resolve_ipv4=$(dig +short A "${DOMAIN}" | head -n1 || true)
+resolve_ipv6=$(dig +short AAAA "${DOMAIN}" | head -n1 || true)
 
 if [[ -z "$resolve_ipv4" && -z "$resolve_ipv6" ]]; then
     echo -e "${RED}错误：域名未解析到任何公网 IP！${NC}"
