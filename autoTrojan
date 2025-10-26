@@ -1,27 +1,45 @@
 #!/bin/bash
-
 set -euo pipefail
 
+# ===============================
+# 彩色输出
+# ===============================
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 NC='\033[0m'
 
 # ===============================
-# 1️⃣ 输入域名并检查解析
+# 1️⃣ 输入域名并检查解析是否匹配本机公网
 # ===============================
 read -p "请输入你的域名（确保已解析）: " DOMAIN
 
-resolve_ip=$(dig +short A "$DOMAIN" | head -n1)
-if [[ -z "$resolve_ip" ]]; then
-    resolve_ip=$(dig +short AAAA "$DOMAIN" | head -n1)
+# 域名解析
+resolve_ipv4=$(dig +short A "$DOMAIN" | head -n1 || true)
+resolve_ipv6=$(dig +short AAAA "$DOMAIN" | head -n1 || true)
+
+if [[ -z "$resolve_ipv4" && -z "$resolve_ipv6" ]]; then
+    echo -e "${RED}错误：域名未解析到任何公网 IP！${NC}"
+    exit 1
 fi
 
-if [[ -z "$resolve_ip" ]]; then
-    echo -e "${RED}错误：域名未解析成功！${NC}"
+# 获取本机公网 IP
+my_ipv4=$(curl -s https://ifconfig.me)
+my_ipv6=$(curl -s https://ifconfig.me -6 || true)
+
+# 校验 IPv4
+if [[ -n "$resolve_ipv4" && "$resolve_ipv4" != "$my_ipv4" ]]; then
+    echo -e "${RED}错误：域名解析的 IPv4 ($resolve_ipv4) 与本机公网 IPv4 ($my_ipv4) 不匹配！${NC}"
     exit 1
-else
-    echo -e "${GREEN}域名解析成功：$resolve_ip${NC}"
 fi
+
+# 校验 IPv6（如果存在）
+if [[ -n "$resolve_ipv6" && "$my_ipv6" != "" && "$resolve_ipv6" != "$my_ipv6" ]]; then
+    echo -e "${RED}错误：域名解析的 IPv6 ($resolve_ipv6) 与本机公网 IPv6 ($my_ipv6) 不匹配！${NC}"
+    exit 1
+fi
+
+echo -e "${GREEN}域名解析成功且匹配本机公网 IP${NC}"
+
 
 # ===============================
 # 2️⃣ 安装依赖
@@ -39,12 +57,13 @@ if [[ ! -d ~/.acme.sh ]]; then
   curl https://get.acme.sh | sh
 fi
 export PATH=~/.acme.sh:$PATH
-source ~/.bashrc || true
+#source ~/.bashrc || true
 
 # ===============================
 # 4️⃣ 创建目录与伪装站点
 # ===============================
 mkdir -p /root/trojan
+mkdir -p /etc/hysteria
 mkdir -p /home/wzweb
 
 cd /home/wzweb
@@ -80,9 +99,7 @@ cat > config.json <<EOF
   "local_port": 443,
   "remote_addr": "127.0.0.1",
   "remote_port": 8080,
-  "password": [
-    "$PASSWORD"
-  ],
+  "password": ["$PASSWORD"],
   "ssl": {
     "cert": "/root/trojan/server.crt",
     "key": "/root/trojan/server.key",
@@ -90,9 +107,7 @@ cat > config.json <<EOF
   },
   "router": {
     "enabled": true,
-    "block": [
-      "geoip:private"
-    ]
+    "block": ["geoip:private"]
   }
 }
 EOF
@@ -121,29 +136,67 @@ systemctl daemon-reload
 systemctl enable trojan-go
 
 # ===============================
-# 7️⃣ 申请 SSL 证书（最后执行，避免 reload 报错）
+# 7️⃣ 申请 SSL 证书
 # ===============================
+echo -e "${GREEN}申请 SSL 证书...${NC}"
 ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt
+
+# 首次签发（使用 standalone，自动监听80）
 ~/.acme.sh/acme.sh --issue -d $DOMAIN --standalone --keylength ec-256
 
+# ===============================
+# 8️⃣ 安装证书并添加 hooks（重点优化部分）
+# ===============================
 ~/.acme.sh/acme.sh --installcert -d $DOMAIN --ecc \
   --key-file /root/trojan/server.key \
   --fullchain-file /root/trojan/server.crt \
-  --reloadcmd "systemctl restart trojan-go"
+  --reloadcmd "bash /root/renew_hook.sh" \
+  --pre-hook "bash /root/pre_stop_hook.sh"
+
+# 创建 pre-hook：在续签前停止服务
+cat > /root/pre_stop_hook.sh <<'EOF'
+#!/bin/bash
+echo "[HOOK] 停止 Trojan-Go 与 Hysteria 服务以释放端口..."
+systemctl stop hysteria-server.service 2>/dev/null || true
+systemctl stop trojan-go.service 2>/dev/null || true
+EOF
+chmod +x /root/pre_stop_hook.sh
+
+# 创建 reload-hook：续签成功后更新文件并重启服务
+cat > /root/renew_hook.sh <<'EOF'
+#!/bin/bash
+echo "[HOOK] 证书续签成功，更新到 Hysteria 并重启服务..."
+
+# 复制证书到 Hysteria 目录
+cp -f /root/trojan/server.crt /etc/hysteria/server.crt
+cp -f /root/trojan/server.key /etc/hysteria/server.key
+
+# 确保权限
+chmod 600 /root/trojan/server.key /etc/hysteria/server.key
+
+# 重启服务
+systemctl restart trojan-go.service
+systemctl restart hysteria-server.service
+
+echo "[HOOK] 已重启 Trojan-Go 与 Hysteria 服务。"
+EOF
+chmod +x /root/renew_hook.sh
 
 # ===============================
-# 8️⃣ 开启自动更新
+# 9️⃣ 启动服务
 # ===============================
-~/.acme.sh/acme.sh --upgrade --auto-upgrade
+systemctl start trojan-go
 
 # ===============================
-# 9️⃣ 输出节点信息
+# 🔟 输出节点信息
 # ===============================
-echo -e "\n${GREEN}Trojan-Go 节点部署成功！以下是你的连接信息：${NC}"
+echo -e "\n${GREEN}Trojan-Go 节点部署成功！${NC}"
 echo -e "域名：$DOMAIN"
 echo -e "端口：443"
 echo -e "密码：$PASSWORD"
 echo -e "SNI：$DOMAIN"
-echo -e "传输协议：TLS"
 echo -e "伪装站点：http://$DOMAIN/"
-echo -e "\n${GREEN}证书将由 acme.sh 自动续签并在续签后自动重启 Trojan-Go${NC}"
+echo -e "\n${GREEN}证书路径：${NC}"
+echo -e "Trojan-Go: /root/trojan/server.crt"
+echo -e "Hysteria : /etc/hysteria/server.crt"
+echo -e "\n${GREEN}acme.sh 将自动续签证书，并在续签前停止服务，续签后自动复制和重启。${NC}"
