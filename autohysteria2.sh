@@ -24,8 +24,8 @@ else
 fi
 
 
-chown hysteria /etc/hysteria/server.key
-chown hysteria /etc/hysteria/server.crt
+[ -f /etc/hysteria/server.key ] && chown hysteria /etc/hysteria/server.key
+[ -f /etc/hysteria/server.crt ] && chown hysteria /etc/hysteria/server.crt
 
 echo "🎲 正在生成可用端口..."
 for i in {1..20}; do
@@ -104,5 +104,5 @@ echo "------------------------------------------------"
 echo "🌐 节点 IP地址   : $IP"
 echo "📡 监听端口     : $PORT"
 echo "🔑 密码         : $PASS"
-echo "🎭 伪装域名     : https://$DOMAIN
-echo "📁
+echo "🎭 伪装域名     : https://$DOMAIN"
+echo "📁 配置文件路径 : /etc/hysteria/config.yaml"
