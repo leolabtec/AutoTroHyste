@@ -202,4 +202,4 @@ echo -e "密码：$PASSWORD"
 echo -e "SNI：$DOMAIN"
 echo -e "证书路径：/root/trojan/server.crt"
 echo -e "证书Key：/root/trojan/server.key"
-echo -e "证书同步
+echo -e "\n${GREEN}证书将在到期前 30 天由 acme.sh 自动续签，并通过 /root/hook.sh 自动更新并重启服务。${NC}"
