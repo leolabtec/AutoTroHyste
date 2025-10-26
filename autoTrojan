@@ -146,7 +146,7 @@ systemctl stop hysteria-server.service 2>/dev/null || true
 echo "[HOOK] 更新 Trojan-Go 证书..."
 install -m 600 "\$SRC_KEY" "\$TROJAN_DIR/server.key"
 install -m 644 "\$SRC_CERT" "\$TROJAN_DIR/server.crt"
-chown trojan:trojan "\$TROJAN_DIR/server.key" "\$TROJAN_DIR/server.crt"
+chown root:root "$TROJAN_DIR/server.key" "$TROJAN_DIR/server.crt"
 
 # 覆盖 Hysteria 证书
 if [[ -d "\$HYSTERIA_DIR" ]]; then
