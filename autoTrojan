@@ -121,19 +121,19 @@ EOF
 systemctl daemon-reload
 systemctl enable trojan-go
 
-# ============ 创建 renew_hook.sh（修复 reload bug） ============
-cat > /root/renew_hook.sh <<'EOF'
+# ============ 创建 hook.sh ============
+cat > /root/hook.sh <<EOF
 #!/bin/bash
 set -euo pipefail
 
-DOMAIN="{{DOMAIN}}"
-ACME_PATH="/root/.acme.sh/${DOMAIN}_ecc"
-SRC_CERT="${ACME_PATH}/fullchain.cer"
-SRC_KEY="${ACME_PATH}/${DOMAIN}.key"
+DOMAIN="${DOMAIN}"
+ACME_PATH="/root/.acme.sh/\${DOMAIN}_ecc"
+SRC_CERT="\${ACME_PATH}/fullchain.cer"
+SRC_KEY="\${ACME_PATH}/\${DOMAIN}.key"
 
 TROJAN_DIR="/root/trojan"
 HYSTERIA_DIR="/etc/hysteria"
-HYSTERIA_USER="Hysteria"
+HYSTERIA_USER="hysteria"
 
 echo "[HOOK] 证书续签成功，开始覆盖并重启服务..."
 
@@ -144,25 +144,28 @@ systemctl stop hysteria-server.service 2>/dev/null || true
 
 # 覆盖 Trojan-Go 证书
 echo "[HOOK] 更新 Trojan-Go 证书..."
-install -m 600 "$SRC_KEY" "$TROJAN_DIR/server.key"
-install -m 644 "$SRC_CERT" "$TROJAN_DIR/server.crt"
+install -m 600 "\$SRC_KEY" "\$TROJAN_DIR/server.key"
+install -m 644 "\$SRC_CERT" "\$TROJAN_DIR/server.crt"
+chown trojan:trojan "\$TROJAN_DIR/server.key" "\$TROJAN_DIR/server.crt"
 
 # 覆盖 Hysteria 证书
-if [[ -d "$HYSTERIA_DIR" ]]; then
+if [[ -d "\$HYSTERIA_DIR" ]]; then
     echo "[HOOK] 更新 Hysteria 证书..."
-    install -m 600 "$SRC_KEY" "$HYSTERIA_DIR/server.key"
-    install -m 644 "$SRC_CERT" "$HYSTERIA_DIR/server.crt"
-    chown "$HYSTERIA_USER:$HYSTERIA_USER" "$HYSTERIA_DIR/server.key" "$HYSTERIA_DIR/server.crt"
+    install -m 600 "\$SRC_KEY" "\$HYSTERIA_DIR/server.key"
+    install -m 644 "\$SRC_CERT" "\$HYSTERIA_DIR/server.crt"
+    chown "\$HYSTERIA_USER:\$HYSTERIA_USER" "\$HYSTERIA_DIR/server.key" "\$HYSTERIA_DIR/server.crt"
 fi
 
 # 重启服务
 echo "[HOOK] 重启 Trojan-Go 与 Hysteria 服务..."
 systemctl restart trojan-go.service
-systemctl restart hysteria-server.service
+systemctl restart hysteria-server.service 2>/dev/null || true
 
 echo "[HOOK] 已完成证书更新并重启服务."
 EOF
-chmod +x /root/renew_hook.sh
+chmod +x /root/hook.sh
+chown root:root /root/hook.sh
+chmod 700 /root/hook.sh
 
 
 # 替换域名变量
