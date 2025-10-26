@@ -1,9 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-# ===============================
-# 彩色输出
-# ===============================
+# ============ 配色 ============
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 NC='\033[0m'
@@ -41,31 +39,20 @@ fi
 echo -e "${GREEN}域名解析成功且匹配本机公网 IP${NC}"
 
 
-# ===============================
-# 2️⃣ 安装依赖
-# ===============================
+# ============ 安装依赖 ============
 echo -e "${GREEN}安装必要依赖...${NC}"
 apt update -y
 apt install -y curl wget socat unzip cron dnsutils docker.io docker-compose
-
 systemctl enable --now cron
 
-# ===============================
-# 3️⃣ 安装 acme.sh
-# ===============================
+# ============ 安装 acme.sh ============
 if [[ ! -d ~/.acme.sh ]]; then
   curl https://get.acme.sh | sh
 fi
 export PATH=~/.acme.sh:$PATH
-#source ~/.bashrc || true
 
-# ===============================
-# 4️⃣ 创建目录与伪装站点
-# ===============================
-mkdir -p /root/trojan
-mkdir -p /etc/hysteria
+# ============ 创建伪装网站 ============
 mkdir -p /home/wzweb
-
 cd /home/wzweb
 cat > docker-compose.yml <<EOF
 version: '3'
@@ -77,12 +64,10 @@ services:
       - "8080:80"
     restart: always
 EOF
-
 docker-compose up -d
 
-# ===============================
-# 5️⃣ 下载并配置 trojan-go
-# ===============================
+# ============ 下载 Trojan-Go ============
+mkdir -p /root/trojan
 cd /root/trojan
 if [[ ! -f trojan-go ]]; then
   wget -O trojan-go.zip https://github.com/p4gefau1t/trojan-go/releases/download/v0.10.6/trojan-go-linux-amd64.zip
@@ -99,7 +84,9 @@ cat > config.json <<EOF
   "local_port": 443,
   "remote_addr": "127.0.0.1",
   "remote_port": 8080,
-  "password": ["$PASSWORD"],
+  "password": [
+    "$PASSWORD"
+  ],
   "ssl": {
     "cert": "/root/trojan/server.crt",
     "key": "/root/trojan/server.key",
@@ -107,14 +94,14 @@ cat > config.json <<EOF
   },
   "router": {
     "enabled": true,
-    "block": ["geoip:private"]
+    "block": [
+      "geoip:private"
+    ]
   }
 }
 EOF
 
-# ===============================
-# 6️⃣ 创建 systemd 服务
-# ===============================
+# ============ 创建 systemd 服务 ============
 cat > /etc/systemd/system/trojan-go.service <<EOF
 [Unit]
 Description=Trojan-Go Service
@@ -131,72 +118,67 @@ RestartSec=5s
 [Install]
 WantedBy=multi-user.target
 EOF
-
 systemctl daemon-reload
 systemctl enable trojan-go
 
-# ===============================
-# 7️⃣ 申请 SSL 证书
-# ===============================
-echo -e "${GREEN}申请 SSL 证书...${NC}"
-~/.acme.sh/acme.sh --set-default-ca --server letsencrypt
+# ============ 创建 renew_hook.sh（修复 reload bug） ============
+cat > /root/renew_hook.sh <<'EOF'
+#!/bin/bash
+set -e
 
-# 首次签发（使用 standalone，自动监听80）
+DOMAIN="{{DOMAIN}}"
+ACME_PATH="/root/.acme.sh/${DOMAIN}_ecc"
+SRC_CERT="${ACME_PATH}/fullchain.cer"
+SRC_KEY="${ACME_PATH}/${DOMAIN}.key"
+
+TROJAN_DIR="/root/trojan"
+HYSTERIA_DIR="/etc/hysteria"
+
+# 停止服务（如果存在）
+systemctl stop trojan-go.service 2>/dev/null || true
+systemctl stop hysteria-server.service 2>/dev/null || true
+
+# 覆盖证书文件
+install -m 600 "$SRC_KEY" "$TROJAN_DIR/server.key"
+install -m 644 "$SRC_CERT" "$TROJAN_DIR/server.crt"
+
+if [[ -d "$HYSTERIA_DIR" ]]; then
+  install -m 600 "$SRC_KEY" "$HYSTERIA_DIR/server.key"
+  install -m 644 "$SRC_CERT" "$HYSTERIA_DIR/server.crt"
+fi
+
+# 重启服务
+systemctl restart trojan-go.service 2>/dev/null || true
+systemctl restart hysteria-server.service 2>/dev/null || true
+EOF
+
+# 替换域名变量
+sed -i "s/{{DOMAIN}}/$DOMAIN/g" /root/renew_hook.sh
+chmod +x /root/renew_hook.sh
+
+# ============ 申请证书 ============
+~/.acme.sh/acme.sh --set-default-ca --server letsencrypt
 ~/.acme.sh/acme.sh --issue -d $DOMAIN --standalone --keylength ec-256
 
-# ===============================
-# 8️⃣ 安装证书并添加 hooks（重点优化部分）
-# ===============================
+# ============ 安装证书（引用 renew_hook.sh） ============
 ~/.acme.sh/acme.sh --installcert -d $DOMAIN --ecc \
   --key-file /root/trojan/server.key \
   --fullchain-file /root/trojan/server.crt \
-  --reloadcmd "bash /root/renew_hook.sh" \
-  --pre-hook "bash /root/pre_stop_hook.sh"
+  --reloadcmd "bash /root/renew_hook.sh"
 
-# 创建 pre-hook：在续签前停止服务
-cat > /root/pre_stop_hook.sh <<'EOF'
-#!/bin/bash
-echo "[HOOK] 停止 Trojan-Go 与 Hysteria 服务以释放端口..."
-systemctl stop hysteria-server.service 2>/dev/null || true
-systemctl stop trojan-go.service 2>/dev/null || true
-EOF
-chmod +x /root/pre_stop_hook.sh
+# ============ 自动升级 acme.sh ============
+~/.acme.sh/acme.sh --upgrade --auto-upgrade
 
-# 创建 reload-hook：续签成功后更新文件并重启服务
-cat > /root/renew_hook.sh <<'EOF'
-#!/bin/bash
-echo "[HOOK] 证书续签成功，更新到 Hysteria 并重启服务..."
+# ============ 启动 Trojan ============
+systemctl restart trojan-go
 
-# 复制证书到 Hysteria 目录
-cp -f /root/trojan/server.crt /etc/hysteria/server.crt
-cp -f /root/trojan/server.key /etc/hysteria/server.key
-
-# 确保权限
-chmod 600 /root/trojan/server.key /etc/hysteria/server.key
-
-# 重启服务
-systemctl restart trojan-go.service
-systemctl restart hysteria-server.service
-
-echo "[HOOK] 已重启 Trojan-Go 与 Hysteria 服务。"
-EOF
-chmod +x /root/renew_hook.sh
-
-# ===============================
-# 9️⃣ 启动服务
-# ===============================
-systemctl start trojan-go
-
-# ===============================
-# 🔟 输出节点信息
-# ===============================
-echo -e "\n${GREEN}Trojan-Go 节点部署成功！${NC}"
+# ============ 输出结果 ============
+echo -e "\n${GREEN}✅ Trojan-Go + Hysteria2 一体部署完成！${NC}"
 echo -e "域名：$DOMAIN"
 echo -e "端口：443"
 echo -e "密码：$PASSWORD"
 echo -e "SNI：$DOMAIN"
-echo -e "伪装站点：http://$DOMAIN/"
-echo -e "\n${GREEN}证书路径：${NC}"
-echo -e "Trojan-Go: /root/trojan/server.crt"
-echo -e "Hysteria : /etc/hysteria/server.crt"
-echo -e "\n${GREEN}acme.sh 将自动续签证书，并在续签前停止服务，续签后自动复制和重启。${NC}"
+echo -e "证书路径：/root/trojan/server.crt"
+echo -e "证书Key：/root/trojan/server.key"
+echo -e "证书同步：/etc/hysteria/"
+echo -e "\n${GREEN}证书将在到期前 30 天由 acme.sh 自动续签，并通过 /root/renew_hook.sh 自动重启服务。${NC}"
