@@ -45,7 +45,24 @@ fi
 # 生成随机密码（20位）
 PASS=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 20)
 
-echo "📝 写入配置文件 /etc/hysteria/config.yaml ..."
+# -----------------------------
+# 从现有证书获取域名
+# -----------------------------
+if [ -f /etc/hysteria/server.crt ]; then
+    DOMAIN=$(openssl x509 -in /etc/hysteria/server.crt -noout -subject | sed -n 's/.*CN=\(.*\)/\1/p')
+    if [ -z "$DOMAIN" ]; then
+        echo "❌ 未能从 /etc/hysteria/server.crt 获取域名，请手动输入"
+        read -rp "🌐 请输入伪装域名: " DOMAIN
+    else
+        echo "✅ 从证书读取到域名: $DOMAIN"
+    fi
+else
+    echo "❌ 证书 /etc/hysteria/server.crt 不存在，请先生成或放置证书"
+    exit 1
+fi
+
+
+# 写入配置文件
 cat <<EOF > /etc/hysteria/config.yaml
 listen: :$PORT
 
@@ -60,7 +77,7 @@ auth:
 masquerade:
   type: proxy
   proxy:
-    url: https://bing.com
+    url: https://$DOMAIN
     rewriteHost: true
 EOF
 
@@ -87,5 +104,5 @@ echo "------------------------------------------------"
 echo "🌐 节点 IP地址   : $IP"
 echo "📡 监听端口     : $PORT"
 echo "🔑 密码         : $PASS"
-echo "🎭 伪装域名     : https://bing.com"
+echo "🎭 伪装域名     : https://$DOMAIN
 echo "📁
