@@ -4,5 +4,11 @@ bash <(curl -fsSL https://raw.githubusercontent.com/leolabtec/AutoTroHyste/main/
 ```
 
 检查状态和日志
-`systemctl status trojan-go.service`
-`journalctl -u trojan-go.service -b`
+
+```
+systemctl status trojan-go.service
+```
+
+```
+journalctl -u trojan-go.service -b
+```
