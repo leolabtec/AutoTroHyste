@@ -43,7 +43,7 @@ if ss -tuln | grep -q ":$PORT "; then
 fi
 
 # 生成随机密码（20位）
-PASS=$(openssl rand -base64 15 | tr -dc A-Za-z0-9)
+PASS=$(openssl rand -base64 32 | tr -dc A-Za-z0-9 | head -c 20)
 
 # -----------------------------
 # 从现有证书获取域名
