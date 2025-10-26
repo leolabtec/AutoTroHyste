@@ -49,7 +49,7 @@ PASS=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 20)
 # 从现有证书获取域名
 # -----------------------------
 if [ -f /etc/hysteria/server.crt ]; then
-    DOMAIN=$(openssl x509 -in /etc/hysteria/server.crt -noout -subject | sed -n 's/.*CN=\(.*\)/\1/p')
+    DOMAIN=$(openssl x509 -in /etc/hysteria/server.crt -noout -text | grep -A1 "Subject Alternative Name" | tail -n1 | sed 's/ *DNS://g' | tr ',' '\n' | head -n1)
     if [ -z "$DOMAIN" ]; then
         echo "❌ 未能从 /etc/hysteria/server.crt 获取域名，请手动输入"
         read -rp "🌐 请输入伪装域名: " DOMAIN
