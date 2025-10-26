@@ -169,18 +169,18 @@ chmod 700 /root/hook.sh
 
 
 # 替换域名变量
-sed -i "s/{{DOMAIN}}/$DOMAIN/g" /root/renew_hook.sh
-chmod +x /root/renew_hook.sh
+sed -i "s/{{DOMAIN}}/$DOMAIN/g" /root/hook.sh
+chmod +x /root/hook.sh
 
 # ============ 申请证书 ============
 ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt
 ~/.acme.sh/acme.sh --issue -d $DOMAIN --standalone --keylength ec-256
 
-# ============ 安装证书（引用 renew_hook.sh） ============
+# ============ 安装证书（引用 hook.sh） ============
 ~/.acme.sh/acme.sh --installcert -d $DOMAIN --ecc \
   --key-file /root/trojan/server.key \
   --fullchain-file /root/trojan/server.crt \
-  --reloadcmd "bash /root/renew_hook.sh"
+  --reloadcmd "bash /root/hook.sh"
 
 # ============ 自动升级 acme.sh ============
 ~/.acme.sh/acme.sh --upgrade --auto-upgrade
@@ -197,4 +197,4 @@ echo -e "SNI：$DOMAIN"
 echo -e "证书路径：/root/trojan/server.crt"
 echo -e "证书Key：/root/trojan/server.key"
 echo -e "证书同步：/etc/hysteria/"
-echo -e "\n${GREEN}证书将在到期前 30 天由 acme.sh 自动续签，并通过 /root/renew_hook.sh 自动重启服务。${NC}"
+echo -e "\n${GREEN}证书将在到期前 30 天由 acme.sh 自动续签，并通过 /root/hook.sh 自动重启服务。${NC}"
