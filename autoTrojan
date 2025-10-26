@@ -124,7 +124,7 @@ systemctl enable trojan-go
 # ============ 创建 renew_hook.sh（修复 reload bug） ============
 cat > /root/renew_hook.sh <<'EOF'
 #!/bin/bash
-set -e
+set -euo pipefail
 
 DOMAIN="{{DOMAIN}}"
 ACME_PATH="/root/.acme.sh/${DOMAIN}_ecc"
@@ -133,24 +133,37 @@ SRC_KEY="${ACME_PATH}/${DOMAIN}.key"
 
 TROJAN_DIR="/root/trojan"
 HYSTERIA_DIR="/etc/hysteria"
+HYSTERIA_USER="Hysteria"
 
-# 停止服务（如果存在）
+echo "[HOOK] 证书续签成功，开始覆盖并重启服务..."
+
+# 停止服务
+echo "[HOOK] 停止 Trojan-Go 与 Hysteria 服务..."
 systemctl stop trojan-go.service 2>/dev/null || true
 systemctl stop hysteria-server.service 2>/dev/null || true
 
-# 覆盖证书文件
+# 覆盖 Trojan-Go 证书
+echo "[HOOK] 更新 Trojan-Go 证书..."
 install -m 600 "$SRC_KEY" "$TROJAN_DIR/server.key"
 install -m 644 "$SRC_CERT" "$TROJAN_DIR/server.crt"
 
+# 覆盖 Hysteria 证书
 if [[ -d "$HYSTERIA_DIR" ]]; then
-  install -m 600 "$SRC_KEY" "$HYSTERIA_DIR/server.key"
-  install -m 644 "$SRC_CERT" "$HYSTERIA_DIR/server.crt"
+    echo "[HOOK] 更新 Hysteria 证书..."
+    install -m 600 "$SRC_KEY" "$HYSTERIA_DIR/server.key"
+    install -m 644 "$SRC_CERT" "$HYSTERIA_DIR/server.crt"
+    chown "$HYSTERIA_USER:$HYSTERIA_USER" "$HYSTERIA_DIR/server.key" "$HYSTERIA_DIR/server.crt"
 fi
 
 # 重启服务
-systemctl restart trojan-go.service 2>/dev/null || true
-systemctl restart hysteria-server.service 2>/dev/null || true
+echo "[HOOK] 重启 Trojan-Go 与 Hysteria 服务..."
+systemctl restart trojan-go.service
+systemctl restart hysteria-server.service
+
+echo "[HOOK] 已完成证书更新并重启服务."
 EOF
+chmod +x /root/renew_hook.sh
+
 
 # 替换域名变量
 sed -i "s/{{DOMAIN}}/$DOMAIN/g" /root/renew_hook.sh
