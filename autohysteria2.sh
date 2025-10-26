@@ -15,8 +15,13 @@ bash <(curl -fsSL https://get.hy2.sh/)
 # 启用开机自启
 systemctl enable hysteria-server.service
 
-# 创建证书目录
-mkdir -p /etc/hysteria
+# 检查证书目录是否存在，若不存在则创建
+if [ ! -d /etc/hysteria ]; then
+    echo "📁 创建证书目录 /etc/hysteria"
+    mkdir -p /etc/hysteria
+else
+    echo "📁 证书目录 /etc/hysteria 已存在，跳过创建"
+fi
 
 echo "🔐 生成自签名 TLS 证书..."
 openssl req -x509 -nodes -newkey ec:<(openssl ecparam -name prime256v1) \
