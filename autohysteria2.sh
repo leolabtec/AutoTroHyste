@@ -23,11 +23,6 @@ else
     echo "📁 证书目录 /etc/hysteria 已存在，跳过创建"
 fi
 
-echo "🔐 生成自签名 TLS 证书..."
-openssl req -x509 -nodes -newkey ec:<(openssl ecparam -name prime256v1) \
-  -keyout /etc/hysteria/server.key \
-  -out /etc/hysteria/server.crt \
-  -subj "/CN=bing.com" -days 36500
 
 chown hysteria /etc/hysteria/server.key
 chown hysteria /etc/hysteria/server.crt
