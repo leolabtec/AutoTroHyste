@@ -17,41 +17,38 @@ fi
 # ===============================
 read -p "请输入你的域名（确保已解析）: " DOMAIN
 
-# 域名解析
-resolve_ipv4=$(dig +short A "${DOMAIN}" | head -n1 || true)
-resolve_ipv6=$(dig +short AAAA "${DOMAIN}" | head -n1 || true)
+echo -e "${GREEN}检测域名解析...${NC}"
+
+resolve_ipv4=$(nslookup $DOMAIN 1.1.1.1 2>/dev/null | awk '/Address: / {print $2}' | head -n1 || true)
+resolve_ipv6=$(nslookup -type=AAAA $DOMAIN 1.1.1.1 2>/dev/null | awk '/Address: / {print $2}' | head -n1 || true)
 
 if [[ -z "$resolve_ipv4" && -z "$resolve_ipv6" ]]; then
-    echo -e "${RED}错误：域名未解析到任何公网 IP！${NC}"
+    echo -e "${RED}错误：域名未解析到任何公网 IP${NC}"
     exit 1
 fi
 
-# 获取本机公网 IP（强制 IPv4/IPv6）
-my_ipv4=$(curl -4 -s https://ifconfig.me || curl -4 -s https://ifconfig.co || true)
-my_ipv6=$(curl -6 -s https://ifconfig.me || curl -6 -s https://ifconfig.co || true)
+my_ipv4=$(wget -4 -qO- http://ipv4.icanhazip.com || true)
+my_ipv6=$(wget -6 -qO- http://ipv6.icanhazip.com || true)
 
 if [[ -n "$resolve_ipv4" ]]; then
     if [[ "$resolve_ipv4" != "$my_ipv4" ]]; then
-        echo -e "${RED}错误：域名解析的 IPv4 ($resolve_ipv4) 与本机公网 IPv4 ($my_ipv4) 不匹配！${NC}"
+        echo -e "${RED}域名 IPv4 ($resolve_ipv4) 不匹配本机 IPv4 ($my_ipv4)${NC}"
         exit 1
     fi
-    echo -e "${GREEN}域名解析成功且匹配本机公网 IPv4${NC}"
+    echo -e "${GREEN}IPv4 解析匹配成功${NC}"
 elif [[ -n "$resolve_ipv6" ]]; then
     if [[ -z "$my_ipv6" ]]; then
-        echo -e "${RED}错误：本机没有可用的 IPv6 公网地址，无法校验！${NC}"
+        echo -e "${RED}本机无公网 IPv6，但域名解析到 IPv6${NC}"
         exit 1
     fi
     if [[ "$resolve_ipv6" != "$my_ipv6" ]]; then
-        echo -e "${RED}错误：域名解析的 IPv6 ($resolve_ipv6) 与本机公网 IPv6 ($my_ipv6) 不匹配！${NC}"
+        echo -e "${RED}域名 IPv6 ($resolve_ipv6) 不匹配本机 IPv6 ($my_ipv6)${NC}"
         exit 1
     fi
-    echo -e "${GREEN}域名解析成功且匹配本机公网 IPv6${NC}"
-else
-    echo -e "${RED}错误：未检测到有效的解析记录（不应出现）${NC}"
-    exit 1
+    echo -e "${GREEN}IPv6 解析匹配成功${NC}"
 fi
 
-echo -e "${GREEN}域名解析成功且匹配本机公网 IP${NC}"
+echo -e "${GREEN}域名解析验证完成${NC}"
 
 # ============ 安装必要依赖 ============
 echo -e "${GREEN}安装必要依赖...${NC}"
