@@ -245,7 +245,7 @@ chown root:root /root/hook_quarterly.sh
 systemctl restart trojan-go
 
 # 输出结果
-echo -e "\n${GREEN}✅ Trojan-Go + Hysteria2 部署完成${NC}"
+echo -e "\n${GREEN}✅ Trojan-Go 部署完成${NC}"
 echo -e "域名：$DOMAIN"
 echo -e "端口：443"
 echo -e "密码：$PASSWORD"
