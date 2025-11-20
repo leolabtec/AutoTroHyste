@@ -176,7 +176,8 @@ cat > /root/trojan/config.json <<EOF
     "cert": "/root/trojan/server.crt",
     "key": "/root/trojan/server.key",
     "sni": "$DOMAIN",
-    "alpn": ["h2","http/1.1"]
+    "fallback_addr": "127.0.0.1",
+    "fallback_port": 8080
   },
   "router": {
     "enabled": true,
