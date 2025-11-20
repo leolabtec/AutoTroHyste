@@ -22,7 +22,13 @@ systemctl enable --now cron
 # ===============================
 # 1️⃣ 输入域名并检查解析是否匹配本机公网
 # ===============================
-read -p "请输入你的域名（确保已解析）: " DOMAIN
+if [ -t 0 ]; then
+  # 直接执行脚本（./AllOne.sh）时，stdin 是终端
+  read -p "请输入你的域名（确保已解析）: " DOMAIN
+else
+  # 通过 curl ... | bash 这种方式时，从 /dev/tty 读用户输入
+  read -p "请输入你的域名（确保已解析）: " DOMAIN </dev/tty
+fi
 
 # 域名解析
 resolve_ipv4=$(dig +short A "${DOMAIN}" | head -n1 || true)
