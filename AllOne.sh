@@ -210,6 +210,36 @@ echo -e "${GREEN}安装 Hysteria2...${NC}"
 bash <(curl -fsSL https://get.hy2.sh/)
 systemctl enable hysteria-server.service
 
+# ============ Hysteria 用户与目录检查 ============
+
+echo -e "${GREEN}检查 Hysteria2 用户与配置目录...${NC}"
+
+HYSTERIA_USER="hysteria"
+HYSTERIA_DIR="/etc/hysteria"
+
+# 检查 Hysteria 用户
+if id "$HYSTERIA_USER" >/dev/null 2>&1; then
+    echo -e "${GREEN}用户 $HYSTERIA_USER 已存在，跳过创建${NC}"
+else
+    echo -e "${GREEN}用户 $HYSTERIA_USER 不存在，创建中...${NC}"
+    useradd -r -s /usr/sbin/nologin "$HYSTERIA_USER"
+    echo -e "${GREEN}用户 $HYSTERIA_USER 已创建${NC}"
+fi
+
+# 检查目录 /etc/hysteria
+if [[ -d "$HYSTERIA_DIR" ]]; then
+    echo -e "${GREEN}目录 $HYSTERIA_DIR 已存在，跳过创建${NC}"
+else
+    echo -e "${GREEN}目录 $HYSTERIA_DIR 不存在，创建中...${NC}"
+    mkdir -p "$HYSTERIA_DIR"
+    echo -e "${GREEN}目录 $HYSTERIA_DIR 已创建${NC}"
+fi
+
+# 目录归属 hysteria 用户（防止已有目录但属主错的情况）
+chown -R "$HYSTERIA_USER:$HYSTERIA_USER" "$HYSTERIA_DIR"
+
+echo -e "${GREEN}Hysteria 用户与目录检查已完成${NC}"
+
 # ==============================
 # 2️⃣ 创建 Hook 脚本（证书续签使用）
 # ==============================
