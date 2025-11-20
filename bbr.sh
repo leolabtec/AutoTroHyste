@@ -1,56 +1,64 @@
 #!/bin/bash
-
 set -e
 
-echo "==============================="
-echo " 开启 BBR 拥塞控制算法"
-echo "==============================="
+GREEN="\033[0;32m"
+RED="\033[0;31m"
+NC="\033[0m"
 
-# 检查当前用户是否为 root
-if [[ $EUID -ne 0 ]]; then
-  echo "请使用 root 用户运行此脚本！"
-  exit 1
-fi
+echo -e "${GREEN}🚀 BBR 加速检测 & 自动开启（V2）${NC}"
 
-# 检查当前内核版本
-kernel_version=$(uname -r | cut -d '-' -f1)
-main_ver=$(echo "$kernel_version" | cut -d '.' -f1)
-minor_ver=$(echo "$kernel_version" | cut -d '.' -f2)
+# 检查当前拥塞算法
+current_cc=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo "")
+current_qdisc=$(sysctl -n net.core.default_qdisc 2>/dev/null || echo "")
 
-if (( main_ver < 4 )) || (( main_ver == 4 && minor_ver < 9 )); then
-  echo "当前内核版本 $kernel_version 不支持原生 BBR（需要 ≥ 4.9）"
-  echo "请升级内核后重试。"
-  exit 1
-fi
-
-# 检查是否已启用 BBR
-if sysctl net.ipv4.tcp_congestion_control | grep -q bbr && lsmod | grep -q bbr; then
-  echo "BBR 已经启用，无需重复设置。"
-  exit 0
-fi
-
-# 写入 sysctl 参数（避免重复写入）
-if ! grep -q "net.core.default_qdisc = fq" /etc/sysctl.conf; then
-  echo "net.core.default_qdisc = fq" >> /etc/sysctl.conf
-fi
-if ! grep -q "net.ipv4.tcp_congestion_control = bbr" /etc/sysctl.conf; then
-  echo "net.ipv4.tcp_congestion_control = bbr" >> /etc/sysctl.conf
-fi
-
-# 应用配置
-sysctl -p
-
-# 验证
+echo "📌 当前拥塞控制算法：$current_cc"
+echo "📌 当前队列算法：$current_qdisc"
 echo ""
-echo "当前拥塞控制算法：$(sysctl net.ipv4.tcp_congestion_control)"
-echo "BBR 模块状态："
-lsmod | grep bbr || echo "未加载 bbr 模块（请重启后再试）"
 
-# 判断最终结果
-if sysctl net.ipv4.tcp_congestion_control | grep -q bbr && lsmod | grep -q bbr; then
-  echo "✅ BBR 启用成功！"
+# 判断是否已启用 BBR
+if [[ "$current_cc" == "bbr" ]]; then
+    echo -e "${GREEN}🎉 已启用 BBR，无需操作${NC}"
+    exit 0
+fi
+
+echo -e "${RED}❌ 未启用 BBR，继续检查内核是否支持...${NC}"
+
+# 检查内核是否包含 tcp_bbr 模块
+if [[ -f "/lib/modules/$(uname -r)/kernel/net/ipv4/tcp_bbr.ko" ]]; then
+    echo -e "${GREEN}✔ 当前内核已包含 BBR 模块${NC}"
 else
-  echo "⚠️  BBR 配置完成，但模块未加载。建议重启后检查："
-  echo "sysctl net.ipv4.tcp_congestion_control"
-  echo "lsmod | grep bbr"
+    echo -e "${RED}❌ 当前内核不支持 BBR！${NC}"
+    echo "➡ 解决方法：升级系统到 Debian 12/13 或 Ubuntu 20/22"
+    exit 1
+fi
+
+# 尝试加载模块（如果未加载）
+if ! lsmod | grep -q '^tcp_bbr'; then
+    echo "📌 加载 BBR 模块..."
+    modprobe tcp_bbr || true
+fi
+
+# 写入 sysctl 配置启用 BBR
+echo "📌 正在启用 BBR..."
+sed -i '/net.core.default_qdisc/d' /etc/sysctl.conf
+sed -i '/net.ipv4.tcp_congestion_control/d' /etc/sysctl.conf
+
+echo "net.core.default_qdisc=fq" >> /etc/sysctl.conf
+echo "net.ipv4.tcp_congestion_control=bbr" >> /etc/sysctl.conf
+
+sysctl -p >/dev/null 2>&1
+
+# 再次校验
+new_cc=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)
+new_qdisc=$(sysctl -n net.core.default_qdisc 2>/dev/null)
+
+echo ""
+echo -e "${GREEN}🔍 重新检查结果：${NC}"
+echo "📌 拥塞控制算法：$new_cc"
+echo "📌 队列算法：$new_qdisc"
+
+if [[ "$new_cc" == "bbr" ]]; then
+    echo -e "${GREEN}🎉 BBR 启用成功！${NC}"
+else
+    echo -e "${RED}❌ 启用失败，请手动检查 /etc/sysctl.conf${NC}"
 fi
