@@ -12,6 +12,13 @@ if [[ $EUID -ne 0 ]]; then
   exit 1
 fi
 
+# ============ 安装必要依赖 ============
+echo -e "${GREEN}安装必要依赖...${NC}"
+apt update -y
+apt install -y curl wget socat unzip cron dnsutils openssl
+
+systemctl enable --now cron
+
 # ===============================
 # 1️⃣ 输入域名并检查解析是否匹配本机公网
 # ===============================
@@ -50,12 +57,6 @@ fi
 
 echo -e "${GREEN}域名解析验证完成${NC}"
 
-# ============ 安装必要依赖 ============
-echo -e "${GREEN}安装必要依赖...${NC}"
-apt update -y
-apt install -y curl wget socat unzip cron dnsutils openssl
-
-systemctl enable --now cron
 
 # ============ 检查并安装 Docker ============
 if ! command -v docker >/dev/null 2>&1; then
