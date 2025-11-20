@@ -12,3 +12,7 @@ systemctl status trojan-go.service
 ```
 journalctl -u trojan-go.service -b
 ```
+# 开启BBR
+```
+bash <(curl -fsSL https://raw.githubusercontent.com/leolabtec/AutoTroHyste/refs/heads/main/bbr.sh)
+```
