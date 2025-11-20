@@ -60,10 +60,57 @@ apt install -y curl wget socat unzip cron dnsutils openssl
 
 systemctl enable --now cron
 
-# 安装 Docker（如果尚未安装）
+# ============ 检查并安装 Docker ============
 if ! command -v docker >/dev/null 2>&1; then
   echo -e "${GREEN}安装 Docker...${NC}"
   curl -fsSL https://get.docker.com | sh
+else
+  echo -e "${GREEN}Docker 已安装${NC}"
+fi
+
+# ============ 检查 / 安装 Docker Compose（同时兼容 v1/v2 调用） ============
+
+COMPOSE_BIN=()
+
+# 优先使用新版本：docker compose
+if docker compose version >/dev/null 2>&1; then
+  echo -e "${GREEN}检测到 docker compose（V2 插件）${NC}"
+  COMPOSE_BIN=(docker compose)
+
+# 其次使用老版本：docker-compose
+elif docker-compose version >/dev/null 2>&1; then
+  echo -e "${GREEN}检测到 docker-compose（V1 独立二进制）${NC}"
+  COMPOSE_BIN=(docker-compose)
+
+# 两个都没有 → 安装 Compose V2 插件，并兼容两种用法
+else
+  echo -e "${GREEN}未检测到 Docker Compose，开始安装 Compose V2 插件...${NC}"
+
+  # 官方推荐的插件目录（Docker CLI 会自动识别）
+  PLUGIN_DIR="/root/.docker/cli-plugins"
+  mkdir -p "$PLUGIN_DIR"
+
+  # 获取最新版本下载地址（Linux x86_64）
+  LATEST_URL=$(curl -fsSL https://api.github.com/repos/docker/compose/releases/latest \
+    | grep browser_download_url \
+    | grep linux-x86_64 \
+    | cut -d '"' -f 4)
+
+  if [[ -z "$LATEST_URL" ]]; then
+    echo -e "${RED}获取 Docker Compose 最新版本下载链接失败${NC}"
+    exit 1
+  fi
+
+  curl -L "$LATEST_URL" -o "${PLUGIN_DIR}/docker-compose"
+  chmod +x "${PLUGIN_DIR}/docker-compose"
+
+  # 额外做一个兼容：让 `docker-compose` 这个命令也可用
+  ln -sf "${PLUGIN_DIR}/docker-compose" /usr/local/bin/docker-compose
+
+  echo -e "${GREEN}Docker Compose V2 安装完成！${NC}"
+  echo -e "${GREEN}支持：'docker compose' 和 'docker-compose' 两种写法${NC}"
+
+  COMPOSE_BIN=(docker compose)
 fi
 
 # ============ 安装 acme.sh ============
@@ -158,17 +205,10 @@ EOF
 systemctl daemon-reload
 systemctl enable trojan-go
 
-# ============ 创建 Hysteria 用户与目录 ============
-echo -e "${GREEN}准备 Hysteria2 目录和用户...${NC}"
-HYSTERIA_DIR="/etc/hysteria"
-HYSTERIA_USER="hysteria"
-
-if ! id -u "$HYSTERIA_USER" >/dev/null 2>&1; then
-    useradd -r -s /usr/sbin/nologin "$HYSTERIA_USER"
-fi
-
-mkdir -p "$HYSTERIA_DIR"
-chown "$HYSTERIA_USER:$HYSTERIA_USER" "$HYSTERIA_DIR"
+# ============ 安装 Hysteria2，并使用同一套证书 ============
+echo -e "${GREEN}安装 Hysteria2...${NC}"
+bash <(curl -fsSL https://get.hy2.sh/)
+systemctl enable hysteria-server.service
 
 # ==============================
 # 2️⃣ 创建 Hook 脚本（证书续签使用）
@@ -268,10 +308,6 @@ echo -e "${GREEN}申请 TLS 证书...${NC}"
 # 启动 Trojan-Go
 systemctl restart trojan-go
 
-# ============ 安装 Hysteria2，并使用同一套证书 ============
-echo -e "${GREEN}安装 Hysteria2...${NC}"
-bash <(curl -fsSL https://get.hy2.sh/)
-systemctl enable hysteria-server.service
 
 # 确保证书在 /etc/hysteria 下也有一份（hook_post 也会维护）
 cp -f /root/trojan/server.crt /etc/hysteria/server.crt
