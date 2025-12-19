@@ -16,3 +16,7 @@ journalctl -u trojan-go.service -b
 ```
 bash <(curl -fsSL https://raw.githubusercontent.com/leolabtec/AutoTroHyste/refs/heads/main/bbr.sh)
 ```
+# TUIC V5
+```
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/leolabtec/AutoTroHyste/refs/heads/main/tuic_v5)"
+```
