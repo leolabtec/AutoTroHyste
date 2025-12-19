@@ -1,0 +1,133 @@
+
+#!/usr/bin/env bash
+set -e
+
+# ====== 基础变量 ======
+TUIC_DIR="/opt/tuic"
+BIN_PATH="/usr/local/bin/tuic-server"
+ACME="$HOME/.acme.sh/acme.sh"
+PORT=USER_PORT
+UUID=$(cat /proc/sys/kernel/random/uuid)
+SYSTEMD_SERVICE="/etc/systemd/system/tuic.service"
+PASSWORD=$(head -c 16 /dev/urandom | base64 | tr -d '=+/')
+# ====== 颜色 ======
+green() { echo -e "\033[32m$1\033[0m"; }
+yellow() { echo -e "\033[33m$1\033[0m"; }
+red() { echo -e "\033[31m$1\033[0m"; }
+
+# ====== 检查 root ======
+if [ "$(id -u)" -ne 0 ]; then
+  red "请使用 root 用户运行"
+  exit 1
+fi
+
+# ====== 输入域名 ======
+read -rp "请输入用于 TUIC 的域名: " DOMAIN
+if [[ -z "$DOMAIN" ]]; then
+  red "域名不能为空"
+  exit 1
+fi
+
+# ====== 输入端口 ======
+read -rp "请输入 TUIC 监听端口 (默认 443): " USER_PORT
+if [[ -z "$USER_PORT" ]]; then
+    PORT=443
+else
+    PORT=$USER_PORT
+fi
+
+# ====== 创建目录 ======
+mkdir -p "$TUIC_DIR"
+
+# ====== 安装依赖 ======
+green "安装基础依赖..."
+apt update -y
+apt install -y curl wget unzip socat openssl
+
+# ====== 安装 acme.sh（如不存在） ======
+if [ ! -f "$ACME" ]; then
+  green "安装 acme.sh..."
+  curl https://get.acme.sh | sh
+fi
+
+# ====== 重新加载环境 ======
+source "$HOME/.bashrc"
+
+# ====== 证书逻辑（重点修复部分） ======
+if "$ACME" --list | awk '{print $1}' | grep -qx "$DOMAIN"; then
+  green "检测到 acme.sh 中已存在 $DOMAIN 证书，直接复用"
+else
+  yellow "acme.sh 中未发现 $DOMAIN，开始申请证书"
+  "$ACME" --issue -d "$DOMAIN" --standalone
+fi
+
+# ====== 安装证书到 TUIC 目录 ======
+green "安装证书到 $TUIC_DIR"
+"$ACME" --install-cert -d "$DOMAIN" \
+  --key-file       "$TUIC_DIR/private.pem" \
+  --fullchain-file "$TUIC_DIR/fullchain.pem"
+
+# 下载 TUIC 官方二进制
+if [ ! -x "$BIN_PATH" ]; then
+  green "下载 TUIC v5 官方二进制"
+  wget -O "$BIN_PATH" "https://github.com/tuic-protocol/tuic/releases/download/tuic-server-1.0.0/tuic-server-1.0.0-x86_64-unknown-linux-gnu"
+  chmod +x "$BIN_PATH"
+fi
+
+# 生成 systemd 服务
+create_service() {
+    cat > $SYSTEMD_SERVICE <<EOF
+[Unit]
+Description=TUIC v5 Server
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=$BIN_PATH -c $TUIC_DIR/config.json
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    systemctl daemon-reload
+    systemctl enable tuic
+    systemctl start tuic
+}
+
+# 生成 TUIC 配置文件
+generate_config() {
+    cat > $TUIC_DIR/config.json <<EOF
+{
+    "server": "[::]:$PORT",
+    "users": {
+        "$UUID": "$PASSWORD"
+    },
+    "certificate": "$TUIC_DIR/fullchain.pem",
+    "private_key": "$TUIC_DIR/private.pem",
+    "congestion_control": "bbr",
+    "alpn": ["h3", "spdy/3.1"],
+    "udp_relay_ipv6": true,
+    "zero_rtt_handshake": false,
+    "auth_timeout": "3s",
+    "max_idle_time": "10s",
+    "max_external_packet_size": 1500,
+    "gc_interval": "3s",
+    "gc_lifetime": "15s",
+    "log_level": "warn"
+}
+EOF
+    green "TUIC 配置文件已生成: $TUIC_DIR/config.json"
+    green "节点密码: $PASSWORD"
+    green "节点地址: $DOMAIN:443"
+}
+
+# ====== 执行安装流程 ======
+generate_config
+create_service
+
+green "TUIC v5 安装完成！"
+green "域名: $DOMAIN"
+green "节点地址: $DOMAIN:$PORT"
+green "节点 UUID: $UUID"
+green "节点密码: $PASSWORD"
