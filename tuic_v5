@@ -29,12 +29,12 @@ if [[ -z "$DOMAIN" ]]; then
 fi
 
 # ====== 输入端口 ======
-read -rp "请输入 TUIC 监听端口 (默认 443): " USER_PORT
-if [[ -z "$USER_PORT" ]]; then
-    PORT=443
-else
-    PORT=$USER_PORT
-fi
+read -rp "请输入 TUIC 监听端口: " PORT
+# 如果用户没输入，就提示重新输入
+while [[ -z "$PORT" ]]; do
+    echo "端口不能为空，请重新输入"
+    read -rp "请输入 TUIC 监听端口: " PORT
+done
 
 # ====== 创建目录 ======
 mkdir -p "$TUIC_DIR"
