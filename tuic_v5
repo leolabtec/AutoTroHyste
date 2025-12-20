@@ -119,7 +119,7 @@ generate_config() {
 EOF
     green "TUIC 配置文件已生成: $TUIC_DIR/config.json"
     green "节点密码: $PASSWORD"
-    green "节点地址: $DOMAIN:443"
+    green "节点地址: $DOMAIN"
 }
 
 # ====== 执行安装流程 ======
