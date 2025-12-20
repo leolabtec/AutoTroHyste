@@ -47,7 +47,12 @@ apt install -y curl wget unzip socat openssl
 # ====== 安装 acme.sh（如不存在） ======
 if [ ! -f "$ACME" ]; then
   green "安装 acme.sh..."
-  curl https://get.acme.sh | sh
+  curl https://get.acme.sh | sh -s 
+
+  # 切换默认 CA 为 Let's Encrypt（避免 ZeroSSL 邮箱注册问题）
+  ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt
+
+  green "acme.sh 安装完成，已自动切换到 Let's Encrypt"
 fi
 
 # ====== 重新加载环境 ======
