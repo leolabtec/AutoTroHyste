@@ -1,4 +1,3 @@
-
 #!/usr/bin/env bash
 set -e
 
@@ -6,10 +5,10 @@ set -e
 TUIC_DIR="/opt/tuic"
 BIN_PATH="/usr/local/bin/tuic-server"
 ACME="$HOME/.acme.sh/acme.sh"
-PORT=USER_PORT
 UUID=$(cat /proc/sys/kernel/random/uuid)
 SYSTEMD_SERVICE="/etc/systemd/system/tuic.service"
 PASSWORD=$(head -c 16 /dev/urandom | base64 | tr -d '=+/')
+
 # ====== 颜色 ======
 green() { echo -e "\033[32m$1\033[0m"; }
 yellow() { echo -e "\033[33m$1\033[0m"; }
@@ -17,22 +16,21 @@ red() { echo -e "\033[31m$1\033[0m"; }
 
 # ====== 检查 root ======
 if [ "$(id -u)" -ne 0 ]; then
-  red "请使用 root 用户运行"
-  exit 1
+    red "请使用 root 用户运行"
+    exit 1
 fi
 
 # ====== 输入域名 ======
 read -rp "请输入用于 TUIC 的域名: " DOMAIN
 if [[ -z "$DOMAIN" ]]; then
-  red "域名不能为空"
-  exit 1
+    red "域名不能为空"
+    exit 1
 fi
 
 # ====== 输入端口 ======
 read -rp "请输入 TUIC 监听端口: " PORT
-# 如果用户没输入，就提示重新输入
-while [[ -z "$PORT" ]]; do
-    echo "端口不能为空，请重新输入"
+while [[ -z "$PORT" ]] || ! [[ "$PORT" =~ ^[0-9]+$ ]] || [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; do
+    red "端口必须是 1-65535 之间的数字，请重新输入"
     read -rp "请输入 TUIC 监听端口: " PORT
 done
 
@@ -58,7 +56,7 @@ if [ ! -f "$ACME" ]; then
         red "切换 CA 到 Let's Encrypt 失败"
         exit 1
     }
-    green "acme.sh 安装完成，已自动切换到 Let's Encrypt"
+    green "acme.sh 安装完成，已切换到 Let's Encrypt"
 else
     # 已安装则自动升级（保持最新）
     green "acme.sh 已安装，正在升级..."
@@ -67,23 +65,22 @@ else
     "$ACME" --set-default-ca --server letsencrypt >/dev/null 2>&1
 fi
 
-# ====== 重新加载环境（确保 acme.sh 命令可用） ======
+# 重新加载环境
 source "$HOME/.bashrc"
 
-# ====== 检查用户输入的域名是否已有证书 ======
-green "检查证书..."
+# ====== 证书处理（核心修复） ======
+green "处理 $DOMAIN 的证书..."
+
 if "$ACME" --list | grep -q "^$DOMAIN"; then
-    green "检测到 acme.sh 中已存在 $DOMAIN 证书，直接复用"
+    green "acme.sh 中已存在 $DOMAIN 证书，直接复用"
 else
     yellow "acme.sh 中未发现 $DOMAIN 证书，开始申请..."
-
-    # 检查 80 端口是否被占用（standalone 模式必须）
+    # 检查 80 端口是否被占用
     if ss -tuln 2>/dev/null | grep -q ':80 '; then
         red "错误：80 端口已被占用，standalone 模式无法使用！"
         red "请先停止占用 80 端口的服务（nginx、apache 等）"
         exit 1
     fi
-
     "$ACME" --issue -d "$DOMAIN" --standalone --force || {
         red "证书申请失败！"
         red "可能原因：DNS 未解析到本机、80 端口被占用、防火墙限制"
@@ -92,54 +89,29 @@ else
     green "证书申请成功"
 fi
 
-# ====== 重新加载环境 ======
-source "$HOME/.bashrc"
+# 无论新旧，都安装证书到 TUIC 目录（覆盖式）
+green "安装证书到 $TUIC_DIR..."
+"$ACME" --install-cert -d "$DOMAIN" \
+    --key-file       "$TUIC_DIR/private.pem" \
+    --fullchain-file "$TUIC_DIR/fullchain.pem" \
+    --reloadcmd      "systemctl restart tuic 2>/dev/null || true"  # 自动重载 TUIC
 
-# ====== 证书逻辑（重点修复部分） ======
-if "$ACME" --list | awk '{print $1}' | grep -qx "$DOMAIN"; then
-  green "检测到 acme.sh 中已存在 $DOMAIN 证书，直接复用"
-else
-  yellow "acme.sh 中未发现 $DOMAIN，开始申请证书"
-  "$ACME" --issue -d "$DOMAIN" --standalone
+# 检查证书是否成功安装
+if [[ ! -f "$TUIC_DIR/fullchain.pem" ]] || [[ ! -f "$TUIC_DIR/private.pem" ]]; then
+    red "证书文件未成功生成到 $TUIC_DIR，请检查 acme.sh 日志"
+    exit 1
 fi
 
-# ====== 安装证书到 TUIC 目录 ======
-green "安装证书到 $TUIC_DIR"
-"$ACME" --install-cert -d "$DOMAIN" \
-  --key-file       "$TUIC_DIR/private.pem" \
-  --fullchain-file "$TUIC_DIR/fullchain.pem"
-
-# 下载 TUIC 官方二进制
+# ====== 下载 TUIC v5 官方二进制（仅当不存在时） ======
 if [ ! -x "$BIN_PATH" ]; then
   green "下载 TUIC v5 官方二进制"
   wget -O "$BIN_PATH" "https://github.com/tuic-protocol/tuic/releases/download/tuic-server-1.0.0/tuic-server-1.0.0-x86_64-unknown-linux-gnu"
   chmod +x "$BIN_PATH"
 fi
 
-# 生成 systemd 服务
-create_service() {
-    cat > $SYSTEMD_SERVICE <<EOF
-[Unit]
-Description=TUIC v5 Server
-After=network.target
-
-[Service]
-Type=simple
-ExecStart=$BIN_PATH -c $TUIC_DIR/config.json
-Restart=on-failure
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-    systemctl daemon-reload
-    systemctl enable tuic
-    systemctl start tuic
-}
-
-# 生成 TUIC 配置文件
+# ====== 生成 TUIC 配置文件 ======
 generate_config() {
-    cat > $TUIC_DIR/config.json <<EOF
+    cat > "$TUIC_DIR/config.json" <<EOF
 {
     "server": "[::]:$PORT",
     "users": {
@@ -161,7 +133,29 @@ generate_config() {
 EOF
     green "TUIC 配置文件已生成: $TUIC_DIR/config.json"
     green "节点密码: $PASSWORD"
-    green "节点地址: $DOMAIN"
+}
+
+# ====== 生成 systemd 服务 ======
+create_service() {
+    cat > "$SYSTEMD_SERVICE" <<EOF
+[Unit]
+Description=TUIC v5 Server
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=$BIN_PATH -c $TUIC_DIR/config.json
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    systemctl daemon-reload
+    systemctl enable tuic
+    systemctl start tuic || {
+        red "TUIC 服务启动失败，请检查 $TUIC_DIR/config.json 或证书文件"
+        exit 1
+    }
 }
 
 # ====== 执行安装流程 ======
@@ -170,6 +164,10 @@ create_service
 
 green "TUIC v5 安装完成！"
 green "域名: $DOMAIN"
+green "端口: $PORT"
 green "节点地址: $DOMAIN:$PORT"
 green "节点 UUID: $UUID"
 green "节点密码: $PASSWORD"
+green "配置文件: $TUIC_DIR/config.json"
+green "证书目录: $TUIC_DIR"
+green "服务状态: $(systemctl is-active tuic)"
