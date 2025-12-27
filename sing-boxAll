@@ -1,0 +1,231 @@
+#!/bin/bash
+# =========================================
+# Sing-box 全协议节点搭建 + 伪装站点 + ACME 自动证书 (最终修复版)
+# 支持 Trojan + Hysteria2 + Tuic 多节点同时运行，端口严格防冲突
+# =========================================
+
+FAKEWEB_DIR="/home/wzweb"
+FAKEWEB_PORT=8080
+SINGBOX_CONFIG="/etc/sing-box/config.json"
+ACME_HOME="$HOME/.acme.sh"
+CERT_DIR="/root/cert"
+SINGBOX_SERVICE="/etc/systemd/system/sing-box.service"
+MENU_STATUS=("inactive" "inactive" "inactive" "inactive")
+DOMAIN=""
+TROJAN_PORT=443
+TROJAN_PASS=""
+HYSTERIA2_PORT=""
+HYSTERIA2_PASS=""
+TUIC_PORT=""
+TUIC_UUID=""
+TUIC_PASS=""
+HYSTERIA_BANDWIDTH=500
+
+generate_password() {
+    openssl rand -base64 32 | tr -dc 'A-Za-z0-9' | head -c 20
+}
+
+generate_uuid() {
+    sing-box generate uuid
+}
+
+# 加强版端口检查：同时检查 TCP 和 UDP
+check_port() {
+    local port=$1
+    if ss -tuln | grep -q ":$port " || ss -uapn | grep -q ":$port "; then
+        echo "端口 $port 已被占用（TCP 或 UDP），请重新输入。"
+        return 1
+    else
+        return 0
+    fi
+}
+
+install_dependencies() {
+    echo "更新系统并安装依赖..."
+    apt update -y && apt upgrade -y
+    DEPS=(socat unzip cron dnsutils docker.io docker-compose openssl curl ss)
+    for pkg in "${DEPS[@]}"; do
+        if ! dpkg -s $pkg >/dev/null 2>&1; then
+            apt install -y $pkg
+        fi
+    done
+    systemctl enable docker && systemctl start docker
+}
+
+install_singbox() {
+    echo "安装最新版 sing-box..."
+    ARCH=$(uname -m)
+    [ "$ARCH" = "x86_64" ] && ARCH="amd64" || ARCH="arm64"
+    LATEST=$(curl -s https://api.github.com/repos/SagerNet/sing-box/releases/latest | grep tag_name | cut -d '"' -f4 | sed 's/v//')
+    curl -L https://github.com/SagerNet/sing-box/releases/download/v${LATEST}/sing-box-${LATEST}-linux-${ARCH}.tar.gz -o /tmp/sb.tar.gz
+    tar -xzf /tmp/sb.tar.gz -C /tmp
+    mv /tmp/sing-box-${LATEST}-linux-${ARCH}/sing-box /usr/local/bin/
+    chmod +x /usr/local/bin/sing-box
+    rm -rf /tmp/sb*
+    echo "sing-box 安装完成: v$LATEST"
+}
+
+check_singbox() {
+    command -v sing-box >/dev/null || install_singbox
+}
+
+check_acme() {
+    [ ! -d "$ACME_HOME" ] && curl https://get.acme.sh | sh && source ~/.bashrc
+    $ACME_HOME/acme.sh --set-default-ca --server letsencrypt
+}
+
+deploy_fakeweb() {
+    mkdir -p $FAKEWEB_DIR && cd $FAKEWEB_DIR
+    cat > docker-compose.yml <<EOF
+version: '3'
+services:
+  fakeweb:
+    image: hongcheng618/wzweb
+    ports:
+      - "${FAKEWEB_PORT}:80"
+    restart: always
+EOF
+    docker-compose up -d
+}
+
+stop_fakeweb() { [ -f "$FAKEWEB_DIR/docker-compose.yml" ] && cd $FAKEWEB_DIR && docker-compose down; }
+start_fakeweb() { [ -f "$FAKEWEB_DIR/docker-compose.yml" ] && cd $FAKEWEB_DIR && docker-compose up -d; }
+
+create_systemd_service() {
+    [ -f "$SINGBOX_SERVICE" ] && return
+    cat > $SINGBOX_SERVICE <<EOF
+[Unit]
+Description=sing-box service
+After=network.target
+
+[Service]
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
+ExecStart=/usr/local/bin/sing-box run -c $SINGBOX_CONFIG
+Restart=on-failure
+LimitNOFILE=infinity
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    systemctl daemon-reload && systemctl enable sing-box
+}
+
+issue_cert() {
+    [ "${MENU_STATUS[0]}" = "active" ] && { echo "证书已存在"; return; }
+    read -p "请输入域名: " DOMAIN
+    [[ -z "$DOMAIN" ]] && return
+    mkdir -p $CERT_DIR
+    stop_fakeweb
+    $ACME_HOME/acme.sh --issue --standalone -d $DOMAIN --keylength ec-256 --force || { start_fakeweb; return; }
+    start_fakeweb
+    $ACME_HOME/acme.sh --install-cert -d $DOMAIN --ecc --fullchain-file $CERT_DIR/fullchain.pem --key-file $CERT_DIR/private.pem
+    HOOK="$ACME_HOME/singbox-hook.sh"
+    cat > $HOOK <<EOF
+#!/bin/bash
+stop_fakeweb
+cp "\$1" "$CERT_DIR/fullchain.pem"
+cp "\$2" "$CERT_DIR/private.pem"
+systemctl restart sing-box
+start_fakeweb
+EOF
+    chmod +x $HOOK
+    $ACME_HOME/acme.sh --install-cert -d $DOMAIN --ecc --reloadcmd "$HOOK"
+    $ACME_HOME/acme.sh --upgrade --auto-upgrade
+    MENU_STATUS[0]="active"
+}
+
+configure_singbox() {
+    mkdir -p /etc/sing-box
+    INBOUNDS=""
+
+    [ "${MENU_STATUS[1]}" = "active" ] && INBOUNDS+='{
+        "type":"trojan","tag":"trojan-in","listen":"0.0.0.0","listen_port":'"$TROJAN_PORT"',
+        "users":[{"password":"'"$TROJAN_PASS"'"}],
+        "tls":{"enabled":true,"certificate_path":"'"$CERT_DIR/fullchain.pem"'","key_path":"'"$CERT_DIR/private.pem"'"}},'
+    
+    [ "${MENU_STATUS[2]}" = "active" ] && INBOUNDS+='{
+        "type":"hysteria2","tag":"hysteria2-in","listen":"0.0.0.0","listen_port":'"$HYSTERIA2_PORT"',
+        "up_mbps":'"$HYSTERIA_BANDWIDTH"',"down_mbps":'"$HYSTERIA_BANDWIDTH"',
+        "users":[{"password":"'"$HYSTERIA2_PASS"'"}],
+        "tls":{"enabled":true,"certificate_path":"'"$CERT_DIR/fullchain.pem"'","key_path":"'"$CERT_DIR/private.pem"'"}},'
+    
+    [ "${MENU_STATUS[3]}" = "active" ] && INBOUNDS+='{
+        "type":"tuic","tag":"tuic-in","listen":"0.0.0.0","listen_port":'"$TUIC_PORT"',
+        "users":[{"uuid":"'"$TUIC_UUID"'","password":"'"$TUIC_PASS"'"}],
+        "congestion_control":"cubic",
+        "tls":{"enabled":true,"certificate_path":"'"$CERT_DIR/fullchain.pem"'","key_path":"'"$CERT_DIR/private.pem"'"}},'
+
+    INBOUNDS=${INBOUNDS%,}
+
+    cat > $SINGBOX_CONFIG <<EOF
+{
+  "log": {"level": "info"},
+  "inbounds": [$INBOUNDS],
+  "outbounds": [{"type": "direct", "tag": "direct"}]
+}
+EOF
+}
+
+restart_singbox() { systemctl restart sing-box; }
+
+print_node_info() {
+    echo -e "\n========== 节点连接信息 =========="
+    [ "${MENU_STATUS[1]}" = "active" ] && echo "Trojan: trojan://$TROJAN_PASS@$DOMAIN:$TROJAN_PORT?#Trojan"
+    [ "${MENU_STATUS[2]}" = "active" ] && echo "Hysteria2: hysteria2://$HYSTERIA2_PASS@$DOMAIN:$HYSTERIA2_PORT/?sni=$DOMAIN#Hysteria2"
+    [ "${MENU_STATUS[3]}" = "active" ] && echo "Tuic: tuic://$TUIC_UUID:$TUIC_PASS@$DOMAIN:$TUIC_PORT/?sni=$DOMAIN#Tuic"
+    echo "=================================="
+}
+
+show_menu() {
+    while true; do
+        clear
+        echo "========== Sing-box 节点管理 =========="
+        echo "1. 创建域名证书 [${MENU_STATUS[0]}]"
+        echo "2. Trojan 节点   [${MENU_STATUS[1]}] ${TROJAN_PORT:+端口:$TROJAN_PORT}"
+        echo "3. Hysteria2 节点 [${MENU_STATUS[2]}] ${HYSTERIA2_PORT:+端口:$HYSTERIA2_PORT}"
+        echo "4. Tuic 节点     [${MENU_STATUS[3]}] ${TUIC_PORT:+端口:$TUIC_PORT}"
+        echo "0. 退出"
+        echo "=================================="
+        read -p "选择: " c
+        case $c in
+            1) issue_cert; create_systemd_service ;;
+            2)
+                [ "${MENU_STATUS[0]}" != "active" ] && { echo "请先创建证书"; read; continue; }
+                read -p "Trojan 端口 (默认443): " p; TROJAN_PORT=${p:-443}
+                while ! check_port $TROJAN_PORT; do read -p "重新输入端口: " TROJAN_PORT; done
+                TROJAN_PASS=$(generate_password)
+                echo "密码: $TROJAN_PASS"
+                MENU_STATUS[1]="active"
+                configure_singbox; restart_singbox; print_node_info
+                ;;
+            3)
+                [ "${MENU_STATUS[0]}" != "active" ] && { echo "请先创建证书"; read; continue; }
+                read -p "Hysteria2 端口: " HYSTERIA2_PORT
+                while ! check_port $HYSTERIA2_PORT || [ -z "$HYSTERIA2_PORT" ]; do read -p "重新输入: " HYSTERIA2_PORT; done
+                HYSTERIA2_PASS=$(generate_password)
+                echo "密码: $HYSTERIA2_PASS"
+                MENU_STATUS[2]="active"
+                configure_singbox; restart_singbox; print_node_info
+                ;;
+            4)
+                [ "${MENU_STATUS[0]}" != "active" ] && { echo "请先创建证书"; read; continue; }
+                read -p "Tuic 端口: " TUIC_PORT
+                while ! check_port $TUIC_PORT || [ -z "$TUIC_PORT" ]; do read -p "重新输入: " TUIC_PORT; done
+                TUIC_UUID=$(generate_uuid); TUIC_PASS=$(generate_password)
+                echo "UUID: $TUIC_UUID  密码: $TUIC_PASS"
+                MENU_STATUS[3]="active"
+                configure_singbox; restart_singbox; print_node_info
+                ;;
+            0) exit 0 ;;
+        esac
+        read -p "按回车继续..."
+    done
+}
+
+install_dependencies
+check_singbox
+check_acme
+deploy_fakeweb
+create_systemd_service
+show_menu
