@@ -2,6 +2,14 @@
 ```sh
 curl -fsSL https://raw.githubusercontent.com/leolabtec/AutoTroHyste/refs/heads/main/AllOne.sh | bash
 ```
+singbox版本
+```
+bash <(curl -sSL https://raw.githubusercontent.com/leolabtec/AutoTroHyste/main/sing-boxAll)
+```
+检查状态
+```
+systemctl status sing-box.service
+```
 
 检查状态和日志
 
