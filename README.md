@@ -2,7 +2,7 @@
 ```sh
 curl -fsSL https://raw.githubusercontent.com/leolabtec/AutoTroHyste/refs/heads/main/AllOne.sh | bash
 ```
-singbox版本
+SingBox版本
 ```
 bash <(curl -sSL https://raw.githubusercontent.com/leolabtec/AutoTroHyste/main/sing-boxAll)
 ```
