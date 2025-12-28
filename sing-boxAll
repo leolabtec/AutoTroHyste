@@ -176,11 +176,10 @@ EOF
     MENU_STATUS[0]="active"
 }
 
-# 关键修复：安全的 JSON 拼接 + 自动校验 + 回滚
 configure_singbox() {
     mkdir -p /etc/sing-box
 
-    # 备份当前配置（如果存在且有效）
+    # 备份当前有效配置
     if [ -f "$SINGBOX_CONFIG" ] && sing-box check -c "$SINGBOX_CONFIG" >/dev/null 2>&1; then
         cp "$SINGBOX_CONFIG" "$SINGBOX_CONFIG_BAK"
     fi
@@ -248,31 +247,33 @@ EOF
 ))
     fi
 
-    # 生成最终配置
-    printf '%s\n' "{"
-    printf '%s\n' "  \"log\": {\"level\": \"info\"},"
-    printf '%s\n' "  \"inbounds\": ["
-    for i in "${!inbounds_array[@]}"; do
-        if [ $i -gt 0 ]; then echo ","; fi
-        printf '%s' "${inbounds_array[$i]}" | sed 's/^/    /'
-    done
-    printf '%s\n' "  ],"
-    printf '%s\n' "  \"outbounds\": [{\"type\": \"direct\", \"tag\": \"direct\"}]"
-    printf '%s\n' "}"
-
+    # 生成配置
+    {
+        echo "{"
+        echo "  \"log\": {\"level\": \"info\"},"
+        echo "  \"inbounds\": ["
+        for i in "${!inbounds_array[@]}"; do
+            [ $i -gt 0 ] && echo "    ,"
+            printf '%s' "${inbounds_array[$i]}" | sed 's/^/    /g'
+        done
+        echo
+        echo "  ],"
+        echo "  \"outbounds\": [{\"type\": \"direct\", \"tag\": \"direct\"}]"
+        echo "}"
     } > "$SINGBOX_CONFIG"
 
-    # 自动校验配置
+    # 校验配置
     echo "正在校验配置..."
     if sing-box check -c "$SINGBOX_CONFIG" >/dev/null 2>&1; then
         echo "配置校验成功！"
+        rm -f "$SINGBOX_CONFIG_BAK"  # 成功后删除旧备份
     else
-        echo "配置校验失败！正在回滚到上一个正常配置..."
+        echo "配置校验失败！正在回滚..."
         if [ -f "$SINGBOX_CONFIG_BAK" ]; then
             cp "$SINGBOX_CONFIG_BAK" "$SINGBOX_CONFIG"
-            echo "已回滚到备份配置"
+            echo "已回滚到上一个正常配置"
         else
-            echo "无可用备份，配置已损坏，请手动修复 $SINGBOX_CONFIG"
+            echo "无可用备份，请手动检查或删除 $SINGBOX_CONFIG 后重试"
         fi
         return 1
     fi
@@ -283,16 +284,16 @@ restart_singbox() {
     if [ $? -eq 0 ]; then
         echo "sing-box 服务启动成功"
     else
-        echo "sing-box 服务启动失败，请查看日志："
-        journalctl -u sing-box.service -n 20 --no-pager
+        echo "sing-box 服务启动失败，查看日志："
+        journalctl -u sing-box.service -n 30 --no-pager
     fi
 }
 
 print_all_nodes_and_nodelist() {
     echo -e "\n\033[1;32m========== 所有节点连接信息 ==========\033[0m"
-    [ "${MENU_STATUS[1]}" = "active" ] && echo "Trojan:    trojan://$TROJAN_PASS@$DOMAIN:$TROJAN_PORT?#Trojan"
+    [ "${MENU_STATUS[1]}" = "active" ] && echo "Trojan: trojan://$TROJAN_PASS@$DOMAIN:$TROJAN_PORT?#Trojan"
     [ "${MENU_STATUS[2]}" = "active" ] && echo "Hysteria2: hysteria2://$HYSTERIA2_PASS@$DOMAIN:$HYSTERIA2_PORT/?sni=$DOMAIN#Hysteria2"
-    [ "${MENU_STATUS[3]}" = "active" ] && echo "Tuic:      tuic://$TUIC_UUID:$TUIC_PASS@$DOMAIN:$TUIC_PORT/?sni=$DOMAIN&congestion_control=cubic#Tuic"
+    [ "${MENU_STATUS[3]}" = "active" ] && echo "Tuic: tuic://$TUIC_UUID:$TUIC_PASS@$DOMAIN:$TUIC_PORT/?sni=$DOMAIN&congestion_control=cubic#Tuic"
     echo -e "\033[1;32m======================================\033[0m\n"
 
     local nodelist=""
@@ -352,7 +353,10 @@ show_menu() {
                     MENU_STATUS[3]="active"
                 fi
 
-                configure_singbox && restart_singbox && print_all_nodes_and_nodelist
+                if configure_singbox; then
+                    restart_singbox
+                    print_all_nodes_and_nodelist
+                fi
                 ;;
             5) print_all_nodes_and_nodelist ;;
             0) exit 0 ;;
