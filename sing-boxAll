@@ -1,8 +1,8 @@
 #!/bin/bash
 # =========================================
-# Sing-box 全协议节点管理脚本 - 最强伪装 + 配置自动校验终极版
+# Sing-box 全协议节点管理脚本 - 最强伪装 + 智能配置终极版
 # Trojan 443 + fallback 伪装站点（浏览器访问域名直接打开网页）
-# 配置写入后自动校验 + 失败自动回滚
+# 首次配置不回滚，有旧配置才备份/回滚
 # =========================================
 
 FAKEWEB_DIR="/home/wzweb"
@@ -179,9 +179,11 @@ EOF
 configure_singbox() {
     mkdir -p /etc/sing-box
 
-    # 备份当前有效配置
+    local need_backup=false
     if [ -f "$SINGBOX_CONFIG" ] && sing-box check -c "$SINGBOX_CONFIG" >/dev/null 2>&1; then
+        need_backup=true
         cp "$SINGBOX_CONFIG" "$SINGBOX_CONFIG_BAK"
+        echo "已备份当前正常配置"
     fi
 
     local inbounds_array=()
@@ -262,21 +264,24 @@ EOF
         echo "}"
     } > "$SINGBOX_CONFIG"
 
-    # 校验配置
-    echo "正在校验配置..."
-    if sing-box check -c "$SINGBOX_CONFIG" >/dev/null 2>&1; then
-        echo "配置校验成功！"
-        rm -f "$SINGBOX_CONFIG_BAK"  # 成功后删除旧备份
-    else
-        echo "配置校验失败！正在回滚..."
-        if [ -f "$SINGBOX_CONFIG_BAK" ]; then
-            cp "$SINGBOX_CONFIG_BAK" "$SINGBOX_CONFIG"
-            echo "已回滚到上一个正常配置"
+    # 只有当有备份时才校验回滚（首次无备份直接接受新配置）
+    if $need_backup; then
+        echo "正在校验新配置..."
+        if sing-box check -c "$SINGBOX_CONFIG" >/dev/null 2>&1; then
+            echo "配置校验成功！"
+            rm -f "$SINGBOX_CONFIG_BAK"
         else
-            echo "无可用备份，请手动检查或删除 $SINGBOX_CONFIG 后重试"
+            echo "配置校验失败！回滚到上一版本..."
+            cp "$SINGBOX_CONFIG_BAK" "$SINGBOX_CONFIG"
+            rm -f "$SINGBOX_CONFIG_BAK"
+            echo "已恢复正常配置"
+            return 1
         fi
-        return 1
+    else
+        echo "首次配置或无旧配置，直接写入新配置"
     fi
+
+    return 0
 }
 
 restart_singbox() {
@@ -356,6 +361,8 @@ show_menu() {
                 if configure_singbox; then
                     restart_singbox
                     print_all_nodes_and_nodelist
+                else
+                    echo "配置失败，请检查后重试"
                 fi
                 ;;
             5) print_all_nodes_and_nodelist ;;
