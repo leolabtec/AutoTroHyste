@@ -1,8 +1,9 @@
 #!/bin/bash
 # =========================================
-# Sing-box 全协议节点管理脚本 - 最强伪装 + 智能配置终极版
+# Sing-box 全协议节点管理脚本 - 最强伪装 + 配置安全写入终极版
+# 使用 jq 生成 JSON，永不出现逗号错误
 # Trojan 443 + fallback 伪装站点（浏览器访问域名直接打开网页）
-# 首次配置不回滚，有旧配置才备份/回滚
+# 首次配置直接写入，有旧配置才备份/回滚
 # =========================================
 
 FAKEWEB_DIR="/home/wzweb"
@@ -186,99 +187,116 @@ configure_singbox() {
         echo "已备份当前正常配置"
     fi
 
-    local inbounds_array=()
+    local temp_inbounds=$(mktemp)
 
+    # Trojan (带 fallback)
     if [ "${MENU_STATUS[1]}" = "active" ]; then
-        inbounds_array+=($(cat <<EOF
-{
-  "type": "trojan",
-  "tag": "trojan-in",
-  "listen": "0.0.0.0",
-  "listen_port": $TROJAN_PORT,
-  "users": [{"password": "$TROJAN_PASS"}],
-  "tls": {
-    "enabled": true,
-    "certificate_path": "$CERT_DIR/fullchain.pem",
-    "key_path": "$CERT_DIR/private.pem"
-  },
-  "fallback": {
-    "server": "127.0.0.1",
-    "server_port": $FAKEWEB_PORT
-  }
-}
-EOF
-))
+        jq -n \
+            --argjson port "$TROJAN_PORT" \
+            --arg pass "$TROJAN_PASS" \
+            --argjson fakeport "$FAKEWEB_PORT" \
+            --arg fullchain "$CERT_DIR/fullchain.pem" \
+            --arg key "$CERT_DIR/private.pem" \
+            '{
+                type: "trojan",
+                tag: "trojan-in",
+                listen: "0.0.0.0",
+                listen_port: $port,
+                users: [{password: $pass}],
+                tls: {
+                    enabled: true,
+                    certificate_path: $fullchain,
+                    key_path: $key
+                },
+                fallback: {
+                    server: "127.0.0.1",
+                    server_port: $fakeport
+                }
+            }' >> "$temp_inbounds"
     fi
 
+    # Hysteria2
     if [ "${MENU_STATUS[2]}" = "active" ]; then
-        inbounds_array+=($(cat <<EOF
-{
-  "type": "hysteria2",
-  "tag": "hysteria2-in",
-  "listen": "0.0.0.0",
-  "listen_port": $HYSTERIA2_PORT,
-  "up_mbps": $HYSTERIA_BANDWIDTH,
-  "down_mbps": $HYSTERIA_BANDWIDTH,
-  "users": [{"password": "$HYSTERIA2_PASS"}],
-  "tls": {
-    "enabled": true,
-    "certificate_path": "$CERT_DIR/fullchain.pem",
-    "key_path": "$CERT_DIR/private.pem"
-  }
-}
-EOF
-))
+        jq -n \
+            --argjson port "$HYSTERIA2_PORT" \
+            --arg pass "$HYSTERIA2_PASS" \
+            --argjson bw "$HYSTERIA_BANDWIDTH" \
+            --arg fullchain "$CERT_DIR/fullchain.pem" \
+            --arg key "$CERT_DIR/private.pem" \
+            '{
+                type: "hysteria2",
+                tag: "hysteria2-in",
+                listen: "0.0.0.0",
+                listen_port: $port,
+                up_mbps: $bw,
+                down_mbps: $bw,
+                users: [{password: $pass}],
+                tls: {
+                    enabled: true,
+                    certificate_path: $fullchain,
+                    key_path: $key
+                }
+            }' >> "$temp_inbounds"
     fi
 
+    # Tuic
     if [ "${MENU_STATUS[3]}" = "active" ]; then
-        inbounds_array+=($(cat <<EOF
-{
-  "type": "tuic",
-  "tag": "tuic-in",
-  "listen": "0.0.0.0",
-  "listen_port": $TUIC_PORT,
-  "users": [{"uuid": "$TUIC_UUID", "password": "$TUIC_PASS"}],
-  "congestion_control": "cubic",
-  "tls": {
-    "enabled": true,
-    "certificate_path": "$CERT_DIR/fullchain.pem",
-    "key_path": "$CERT_DIR/private.pem"
-  }
-}
-EOF
-))
+        jq -n \
+            --argjson port "$TUIC_PORT" \
+            --arg uuid "$TUIC_UUID" \
+            --arg pass "$TUIC_PASS" \
+            --arg fullchain "$CERT_DIR/fullchain.pem" \
+            --arg key "$CERT_DIR/private.pem" \
+            '{
+                type: "tuic",
+                tag: "tuic-in",
+                listen: "0.0.0.0",
+                listen_port: $port,
+                users: [{uuid: $uuid, password: $pass}],
+                congestion_control: "cubic",
+                tls: {
+                    enabled: true,
+                    certificate_path: $fullchain,
+                    key_path: $key
+                }
+            }' >> "$temp_inbounds"
     fi
 
-    # 生成配置
-    {
-        echo "{"
-        echo "  \"log\": {\"level\": \"info\"},"
-        echo "  \"inbounds\": ["
-        for i in "${!inbounds_array[@]}"; do
-            [ $i -gt 0 ] && echo "    ,"
-            printf '%s' "${inbounds_array[$i]}" | sed 's/^/    /g'
-        done
-        echo
-        echo "  ],"
-        echo "  \"outbounds\": [{\"type\": \"direct\", \"tag\": \"direct\"}]"
-        echo "}"
-    } > "$SINGBOX_CONFIG"
+    # 用 jq 组装最终配置
+    if [ -s "$temp_inbounds" ]; then
+        jq -s '{
+            log: {level: "info"},
+            inbounds: .,
+            outbounds: [{type: "direct", tag: "direct"}]
+        }' "$temp_inbounds" > "$SINGBOX_CONFIG"
+    else
+        jq -n '{
+            log: {level: "info"},
+            inbounds: [],
+            outbounds: [{type: "direct", tag: "direct"}]
+        }' > "$SINGBOX_CONFIG"
+    fi
 
-    # 只有当有备份时才校验回滚（首次无备份直接接受新配置）
-    if $need_backup; then
-        echo "正在校验新配置..."
-        if sing-box check -c "$SINGBOX_CONFIG" >/dev/null 2>&1; then
-            echo "配置校验成功！"
+    rm -f "$temp_inbounds"
+
+    # 校验
+    echo "正在校验配置..."
+    if sing-box check -c "$SINGBOX_CONFIG" >/dev/null 2>&1; then
+        echo "配置校验成功！"
+        if $need_backup; then
             rm -f "$SINGBOX_CONFIG_BAK"
-        else
-            echo "配置校验失败！回滚到上一版本..."
+        fi
+    else
+        echo "配置异常！"
+        if $need_backup; then
+            echo "回滚到上一版本..."
             cp "$SINGBOX_CONFIG_BAK" "$SINGBOX_CONFIG"
             rm -f "$SINGBOX_CONFIG_BAK"
             echo "已恢复正常配置"
-            return 1
+        else
+            echo "首次配置失败，请检查日志或手动编辑 $SINGBOX_CONFIG"
         fi
-    else
-        echo "首次配置或无旧配置，直接写入新配置"
+        return 1
     fi
 
     return 0
@@ -362,7 +380,7 @@ show_menu() {
                     restart_singbox
                     print_all_nodes_and_nodelist
                 else
-                    echo "配置失败，请检查后重试"
+                    echo "配置失败，请检查日志或手动编辑 $SINGBOX_CONFIG"
                 fi
                 ;;
             5) print_all_nodes_and_nodelist ;;
