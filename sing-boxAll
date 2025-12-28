@@ -1,8 +1,9 @@
 #!/bin/bash
 # =========================================
-# Sing-box 全协议节点管理脚本 - 最终稳定版
-# 支持 Trojan + Hysteria2 + Tuic + 伪装站点 + 自动续期
-# 添加节点后立即显示完整链接 + NodeList 订阅
+# Sing-box 全协议节点管理脚本 - 最强伪装终极版
+# Trojan 443 端口添加 fallback 到伪装站点
+# 浏览器直接访问域名 → 完美打开伪装网页（最强伪装）
+# 支持 Trojan + Hysteria2 + Tuic + 自动续期 + NodeList 订阅
 # =========================================
 
 FAKEWEB_DIR="/home/wzweb"
@@ -26,7 +27,6 @@ HYSTERIA_BANDWIDTH=500
 generate_password() { openssl rand -base64 32 | tr -dc 'A-Za-z0-9' | head -c 20; }
 generate_uuid() { sing-box generate uuid; }
 
-# 端口检查：排除 sing-box 自身占用
 check_port() {
     local port=$1
     local temp_stop=0
@@ -75,7 +75,6 @@ check_acme() {
     $ACME_HOME/acme.sh --set-default-ca --server letsencrypt
 }
 
-# 修复：变量正确展开，生成有效 docker-compose.yml
 deploy_fakeweb() {
     mkdir -p "$FAKEWEB_DIR"
     cd "$FAKEWEB_DIR" || return
@@ -111,7 +110,6 @@ EOF
     systemctl daemon-reload && systemctl enable sing-box
 }
 
-# 健壮加载已有配置
 load_existing_config() {
     if [ -f "$CERT_DIR/fullchain.pem" ]; then
         MENU_STATUS[0]="active"
@@ -140,7 +138,6 @@ issue_cert() {
     [[ -z "$DOMAIN" ]] && return
     mkdir -p "$CERT_DIR"
 
-    # 停止伪装站点（直接用 docker-compose）
     if [ -f "$FAKEWEB_DIR/docker-compose.yml" ]; then
         cd "$FAKEWEB_DIR" && docker-compose down >/dev/null 2>&1
     fi
@@ -151,12 +148,10 @@ issue_cert() {
         return
     }
 
-    # 安装证书
     $ACME_HOME/acme.sh --install-cert -d "$DOMAIN" --ecc \
         --fullchain-file "$CERT_DIR/fullchain.pem" \
         --key-file "$CERT_DIR/private.pem"
 
-    # 创建独立可运行的 hook 脚本（续期专用）
     HOOK="$ACME_HOME/singbox-hook.sh"
     cat > "$HOOK" <<'EOF'
 #!/bin/bash
@@ -176,7 +171,6 @@ EOF
     $ACME_HOME/acme.sh --install-cert -d "$DOMAIN" --ecc --reloadcmd "$HOOK"
     $ACME_HOME/acme.sh --upgrade --auto-upgrade
 
-    # 启动伪装站点
     cd "$FAKEWEB_DIR" && docker-compose up -d >/dev/null 2>&1
 
     MENU_STATUS[0]="active"
@@ -185,9 +179,50 @@ EOF
 configure_singbox() {
     mkdir -p /etc/sing-box
     INBOUNDS=""
-    [ "${MENU_STATUS[1]}" = "active" ] && INBOUNDS+='{"type":"trojan","tag":"trojan-in","listen":"0.0.0.0","listen_port":'"$TROJAN_PORT"',"users":[{"password":"'"$TROJAN_PASS"'"}],"tls":{"enabled":true,"certificate_path":"'"$CERT_DIR/fullchain.pem"'","key_path":"'"$CERT_DIR/private.pem"'"}},'
-    [ "${MENU_STATUS[2]}" = "active" ] && INBOUNDS+='{"type":"hysteria2","tag":"hysteria2-in","listen":"0.0.0.0","listen_port":'"$HYSTERIA2_PORT"',"up_mbps":'"$HYSTERIA_BANDWIDTH"',"down_mbps":'"$HYSTERIA_BANDWIDTH"',"users":[{"password":"'"$HYSTERIA2_PASS"'"}],"tls":{"enabled":true,"certificate_path":"'"$CERT_DIR/fullchain.pem"'","key_path":"'"$CERT_DIR/private.pem"'"}},'
-    [ "${MENU_STATUS[3]}" = "active" ] && INBOUNDS+='{"type":"tuic","tag":"tuic-in","listen":"0.0.0.0","listen_port":'"$TUIC_PORT"',"users":[{"uuid":"'"$TUIC_UUID"'","password":"'"$TUIC_PASS"'"}],"congestion_control":"cubic","tls":{"enabled":true,"certificate_path":"'"$CERT_DIR/fullchain.pem"'","key_path":"'"$CERT_DIR/private.pem"'"}},'
+    # Trojan 添加 fallback 到伪装站点，实现最强伪装
+    [ "${MENU_STATUS[1]}" = "active" ] && INBOUNDS+='{
+        "type":"trojan",
+        "tag":"trojan-in",
+        "listen":"0.0.0.0",
+        "listen_port":'"$TROJAN_PORT"',
+        "users":[{"password":"'"$TROJAN_PASS"'"}],
+        "tls":{
+            "enabled":true,
+            "certificate_path":"'"$CERT_DIR/fullchain.pem"'",
+            "key_path":"'"$CERT_DIR/private.pem"'"
+        },
+        "fallback":{
+            "server":"127.0.0.1",
+            "server_port":'"$FAKEWEB_PORT"'
+        }
+    },'
+    [ "${MENU_STATUS[2]}" = "active" ] && INBOUNDS+='{
+        "type":"hysteria2",
+        "tag":"hysteria2-in",
+        "listen":"0.0.0.0",
+        "listen_port":'"$HYSTERIA2_PORT"',
+        "up_mbps":'"$HYSTERIA_BANDWIDTH"',
+        "down_mbps":'"$HYSTERIA_BANDWIDTH"',
+        "users":[{"password":"'"$HYSTERIA2_PASS"'"}],
+        "tls":{
+            "enabled":true,
+            "certificate_path":"'"$CERT_DIR/fullchain.pem"'",
+            "key_path":"'"$CERT_DIR/private.pem"'"
+        }
+    },'
+    [ "${MENU_STATUS[3]}" = "active" ] && INBOUNDS+='{
+        "type":"tuic",
+        "tag":"tuic-in",
+        "listen":"0.0.0.0",
+        "listen_port":'"$TUIC_PORT"',
+        "users":[{"uuid":"'"$TUIC_UUID"'","password":"'"$TUIC_PASS"'"}],
+        "congestion_control":"cubic",
+        "tls":{
+            "enabled":true,
+            "certificate_path":"'"$CERT_DIR/fullchain.pem"'",
+            "key_path":"'"$CERT_DIR/private.pem"'"
+        }
+    },'
     INBOUNDS=${INBOUNDS%,}
     cat > "$SINGBOX_CONFIG" <<EOF
 {
@@ -200,7 +235,6 @@ EOF
 
 restart_singbox() { systemctl restart sing-box; }
 
-# 打印所有节点 + NodeList 订阅
 print_all_nodes_and_nodelist() {
     echo -e "\n\033[1;32m========== 所有节点连接信息 ==========\033[0m"
     [ "${MENU_STATUS[1]}" = "active" ] && echo "Trojan:    trojan://$TROJAN_PASS@$DOMAIN:$TROJAN_PORT?#Trojan"
@@ -217,7 +251,7 @@ print_all_nodes_and_nodelist() {
         local base64=$(echo -e "$nodelist" | base64 -w 0)
         echo -e "\033[1;33m========== NodeList 订阅（Base64）==========\033[0m"
         echo "$base64"
-        echo -e "\033[1;33m直接复制上方 Base64 内容保存为 .txt 或用于订阅转换\033[0m\n"
+        echo -e "\033[1;33m复制上方 Base64 保存为文件或用于订阅转换\033[0m\n"
     fi
 }
 
@@ -226,7 +260,7 @@ show_menu() {
         clear
         echo "========== Sing-box 节点管理 =========="
         echo "1. 创建/查看域名证书 [${MENU_STATUS[0]}] ${DOMAIN:+域名:$DOMAIN}"
-        echo "2. Trojan 节点     [${MENU_STATUS[1]}] ${TROJAN_PORT:+端口:$TROJAN_PORT}"
+        echo "2. Trojan 节点     [${MENU_STATUS[1]}] ${TROJAN_PORT:+端口:$TROJAN_PORT} ${MENU_STATUS[1]:+（已启用 fallback 伪装）}"
         echo "3. Hysteria2 节点  [${MENU_STATUS[2]}] ${HYSTERIA2_PORT:+端口:$HYSTERIA2_PORT}"
         echo "4. Tuic 节点       [${MENU_STATUS[3]}] ${TUIC_PORT:+端口:$TUIC_PORT}"
         echo "5. 查看所有节点信息和订阅"
@@ -239,7 +273,7 @@ show_menu() {
                 [ "${MENU_STATUS[0]}" != "active" ] && { echo "请先创建证书"; read -n1 -s; continue; }
                 if [[ $c == 2 && "${MENU_STATUS[1]}" == "active" ]] || [[ $c == 3 && "${MENU_STATUS[2]}" == "active" ]] || [[ $c == 4 && "${MENU_STATUS[3]}" == "active" ]]; then
                     echo "该节点已启用"
-                    read -p "是否重新配置（生成新密码/更改端口）？(y/N): " reconf
+                    read -p "是否重新配置？(y/N): " reconf
                     [[ ! "$reconf" =~ ^[Yy]$ ]] && continue
                 fi
 
