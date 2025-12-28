@@ -1,14 +1,14 @@
 #!/bin/bash
 # =========================================
-# Sing-box 全协议节点管理脚本 - 最强伪装终极版
-# Trojan 443 端口添加 fallback 到伪装站点
-# 浏览器直接访问域名 → 完美打开伪装网页（最强伪装）
-# 支持 Trojan + Hysteria2 + Tuic + 自动续期 + NodeList 订阅
+# Sing-box 全协议节点管理脚本 - 最强伪装 + 配置自动校验终极版
+# Trojan 443 + fallback 伪装站点（浏览器访问域名直接打开网页）
+# 配置写入后自动校验 + 失败自动回滚
 # =========================================
 
 FAKEWEB_DIR="/home/wzweb"
 FAKEWEB_PORT=8080
 SINGBOX_CONFIG="/etc/sing-box/config.json"
+SINGBOX_CONFIG_BAK="/etc/sing-box/config.json.bak"
 ACME_HOME="$HOME/.acme.sh"
 CERT_DIR="/root/cert"
 SINGBOX_SERVICE="/etc/systemd/system/sing-box.service"
@@ -116,7 +116,7 @@ load_existing_config() {
         DOMAIN=$(openssl x509 -in "$CERT_DIR/fullchain.pem" -noout -subject | sed -n 's/.*CN = \([^,]*\).*/\1/p' | head -n1)
     fi
 
-    if [ -f "$SINGBOX_CONFIG" ] && command -v jq >/dev/null && jq empty "$SINGBOX_CONFIG" >/dev/null 2>&1; then
+    if [ -f "$SINGBOX_CONFIG" ] && command -v jq >/dev/null && sing-box check -c "$SINGBOX_CONFIG" >/dev/null 2>&1; then
         mapfile -t types < <(jq -r '.inbounds[].type' "$SINGBOX_CONFIG")
         mapfile -t ports < <(jq -r '.inbounds[].listen_port' "$SINGBOX_CONFIG")
         mapfile -t passwords < <(jq -r '.inbounds[].users[0].password // empty' "$SINGBOX_CONFIG")
@@ -176,64 +176,117 @@ EOF
     MENU_STATUS[0]="active"
 }
 
+# 关键修复：安全的 JSON 拼接 + 自动校验 + 回滚
 configure_singbox() {
     mkdir -p /etc/sing-box
-    INBOUNDS=""
-    # Trojan 添加 fallback 到伪装站点，实现最强伪装
-    [ "${MENU_STATUS[1]}" = "active" ] && INBOUNDS+='{
-        "type":"trojan",
-        "tag":"trojan-in",
-        "listen":"0.0.0.0",
-        "listen_port":'"$TROJAN_PORT"',
-        "users":[{"password":"'"$TROJAN_PASS"'"}],
-        "tls":{
-            "enabled":true,
-            "certificate_path":"'"$CERT_DIR/fullchain.pem"'",
-            "key_path":"'"$CERT_DIR/private.pem"'"
-        },
-        "fallback":{
-            "server":"127.0.0.1",
-            "server_port":'"$FAKEWEB_PORT"'
-        }
-    },'
-    [ "${MENU_STATUS[2]}" = "active" ] && INBOUNDS+='{
-        "type":"hysteria2",
-        "tag":"hysteria2-in",
-        "listen":"0.0.0.0",
-        "listen_port":'"$HYSTERIA2_PORT"',
-        "up_mbps":'"$HYSTERIA_BANDWIDTH"',
-        "down_mbps":'"$HYSTERIA_BANDWIDTH"',
-        "users":[{"password":"'"$HYSTERIA2_PASS"'"}],
-        "tls":{
-            "enabled":true,
-            "certificate_path":"'"$CERT_DIR/fullchain.pem"'",
-            "key_path":"'"$CERT_DIR/private.pem"'"
-        }
-    },'
-    [ "${MENU_STATUS[3]}" = "active" ] && INBOUNDS+='{
-        "type":"tuic",
-        "tag":"tuic-in",
-        "listen":"0.0.0.0",
-        "listen_port":'"$TUIC_PORT"',
-        "users":[{"uuid":"'"$TUIC_UUID"'","password":"'"$TUIC_PASS"'"}],
-        "congestion_control":"cubic",
-        "tls":{
-            "enabled":true,
-            "certificate_path":"'"$CERT_DIR/fullchain.pem"'",
-            "key_path":"'"$CERT_DIR/private.pem"'"
-        }
-    },'
-    INBOUNDS=${INBOUNDS%,}
-    cat > "$SINGBOX_CONFIG" <<EOF
+
+    # 备份当前配置（如果存在且有效）
+    if [ -f "$SINGBOX_CONFIG" ] && sing-box check -c "$SINGBOX_CONFIG" >/dev/null 2>&1; then
+        cp "$SINGBOX_CONFIG" "$SINGBOX_CONFIG_BAK"
+    fi
+
+    local inbounds_array=()
+
+    if [ "${MENU_STATUS[1]}" = "active" ]; then
+        inbounds_array+=($(cat <<EOF
 {
-  "log": {"level": "info"},
-  "inbounds": [$INBOUNDS],
-  "outbounds": [{"type": "direct", "tag": "direct"}]
+  "type": "trojan",
+  "tag": "trojan-in",
+  "listen": "0.0.0.0",
+  "listen_port": $TROJAN_PORT,
+  "users": [{"password": "$TROJAN_PASS"}],
+  "tls": {
+    "enabled": true,
+    "certificate_path": "$CERT_DIR/fullchain.pem",
+    "key_path": "$CERT_DIR/private.pem"
+  },
+  "fallback": {
+    "server": "127.0.0.1",
+    "server_port": $FAKEWEB_PORT
+  }
 }
 EOF
+))
+    fi
+
+    if [ "${MENU_STATUS[2]}" = "active" ]; then
+        inbounds_array+=($(cat <<EOF
+{
+  "type": "hysteria2",
+  "tag": "hysteria2-in",
+  "listen": "0.0.0.0",
+  "listen_port": $HYSTERIA2_PORT,
+  "up_mbps": $HYSTERIA_BANDWIDTH,
+  "down_mbps": $HYSTERIA_BANDWIDTH,
+  "users": [{"password": "$HYSTERIA2_PASS"}],
+  "tls": {
+    "enabled": true,
+    "certificate_path": "$CERT_DIR/fullchain.pem",
+    "key_path": "$CERT_DIR/private.pem"
+  }
+}
+EOF
+))
+    fi
+
+    if [ "${MENU_STATUS[3]}" = "active" ]; then
+        inbounds_array+=($(cat <<EOF
+{
+  "type": "tuic",
+  "tag": "tuic-in",
+  "listen": "0.0.0.0",
+  "listen_port": $TUIC_PORT,
+  "users": [{"uuid": "$TUIC_UUID", "password": "$TUIC_PASS"}],
+  "congestion_control": "cubic",
+  "tls": {
+    "enabled": true,
+    "certificate_path": "$CERT_DIR/fullchain.pem",
+    "key_path": "$CERT_DIR/private.pem"
+  }
+}
+EOF
+))
+    fi
+
+    # 生成最终配置
+    printf '%s\n' "{"
+    printf '%s\n' "  \"log\": {\"level\": \"info\"},"
+    printf '%s\n' "  \"inbounds\": ["
+    for i in "${!inbounds_array[@]}"; do
+        if [ $i -gt 0 ]; then echo ","; fi
+        printf '%s' "${inbounds_array[$i]}" | sed 's/^/    /'
+    done
+    printf '%s\n' "  ],"
+    printf '%s\n' "  \"outbounds\": [{\"type\": \"direct\", \"tag\": \"direct\"}]"
+    printf '%s\n' "}"
+
+    } > "$SINGBOX_CONFIG"
+
+    # 自动校验配置
+    echo "正在校验配置..."
+    if sing-box check -c "$SINGBOX_CONFIG" >/dev/null 2>&1; then
+        echo "配置校验成功！"
+    else
+        echo "配置校验失败！正在回滚到上一个正常配置..."
+        if [ -f "$SINGBOX_CONFIG_BAK" ]; then
+            cp "$SINGBOX_CONFIG_BAK" "$SINGBOX_CONFIG"
+            echo "已回滚到备份配置"
+        else
+            echo "无可用备份，配置已损坏，请手动修复 $SINGBOX_CONFIG"
+        fi
+        return 1
+    fi
 }
 
-restart_singbox() { systemctl restart sing-box; }
+restart_singbox() {
+    systemctl restart sing-box
+    if [ $? -eq 0 ]; then
+        echo "sing-box 服务启动成功"
+    else
+        echo "sing-box 服务启动失败，请查看日志："
+        journalctl -u sing-box.service -n 20 --no-pager
+    fi
+}
 
 print_all_nodes_and_nodelist() {
     echo -e "\n\033[1;32m========== 所有节点连接信息 ==========\033[0m"
@@ -260,9 +313,9 @@ show_menu() {
         clear
         echo "========== Sing-box 节点管理 =========="
         echo "1. 创建/查看域名证书 [${MENU_STATUS[0]}] ${DOMAIN:+域名:$DOMAIN}"
-        echo "2. Trojan 节点     [${MENU_STATUS[1]}] ${TROJAN_PORT:+端口:$TROJAN_PORT} ${MENU_STATUS[1]:+（已启用 fallback 伪装）}"
-        echo "3. Hysteria2 节点  [${MENU_STATUS[2]}] ${HYSTERIA2_PORT:+端口:$HYSTERIA2_PORT}"
-        echo "4. Tuic 节点       [${MENU_STATUS[3]}] ${TUIC_PORT:+端口:$TUIC_PORT}"
+        echo "2. Trojan 节点 [${MENU_STATUS[1]}] ${TROJAN_PORT:+端口:$TROJAN_PORT} ${MENU_STATUS[1]:+（已启用 fallback 最强伪装）}"
+        echo "3. Hysteria2 节点 [${MENU_STATUS[2]}] ${HYSTERIA2_PORT:+端口:$HYSTERIA2_PORT}"
+        echo "4. Tuic 节点 [${MENU_STATUS[3]}] ${TUIC_PORT:+端口:$TUIC_PORT}"
         echo "5. 查看所有节点信息和订阅"
         echo "0. 退出"
         echo "=================================="
@@ -299,9 +352,7 @@ show_menu() {
                     MENU_STATUS[3]="active"
                 fi
 
-                configure_singbox
-                restart_singbox
-                print_all_nodes_and_nodelist
+                configure_singbox && restart_singbox && print_all_nodes_and_nodelist
                 ;;
             5) print_all_nodes_and_nodelist ;;
             0) exit 0 ;;
