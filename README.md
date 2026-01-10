@@ -4,7 +4,7 @@ curl -fsSL https://raw.githubusercontent.com/leolabtec/AutoTroHyste/refs/heads/m
 ```
 SingBox版本
 ```
-bash <(curl -sSL https://raw.githubusercontent.com/leolabtec/AutoTroHyste/main/sing-boxAll)
+bash <(curl -sSL https://raw.githubusercontent.com/leolabtec/AutoTroHyste/main/sing_box.sh)
 ```
 检查状态
 ```
